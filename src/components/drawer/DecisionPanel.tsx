@@ -1,0 +1,174 @@
+"use client";
+
+import { useState, type FormEvent } from "react";
+import { ApiClientError } from "@/lib/client/api";
+import { useBusinessToday, useDecision } from "@/lib/client/queries";
+import { PAYMENT_TERMS } from "@/lib/domain/constants";
+import { centsToDecimal } from "@/lib/domain/csv";
+import { parseMoneyToCents } from "@/lib/domain/money";
+import { can } from "@/lib/domain/roles";
+import type { CustomerSummary } from "@/lib/types";
+import { decisionSchema } from "@/lib/validation";
+import { useAutoFocus } from "../useAutoFocus";
+import { useToast } from "../Toast";
+import { useUi } from "../ui-context";
+
+interface Props {
+  customer: CustomerSummary;
+  active: string | null;
+  setActive: (form: string | null) => void;
+}
+
+function useDecide(customer: CustomerSummary, done: () => void) {
+  const notify = useToast();
+  const decision = useDecision(customer.id);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run(input: unknown, success: string) {
+    setError(null);
+    const parsed = decisionSchema.safeParse(input);
+    if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "Check the details and try again.");
+    try {
+      await decision.mutateAsync(parsed.data);
+      notify(success);
+      done();
+    } catch (caught) {
+      setError(caught instanceof ApiClientError ? caught.message : "Could not save. Please try again.");
+    }
+  }
+  return { run, fail: setError, error, pending: decision.isPending };
+}
+
+function ApproveForm({ customer, done }: { customer: CustomerSummary; done: () => void }) {
+  const { run, fail, error, pending } = useDecide(customer, done);
+  const [limit, setLimit] = useState(customer.requestedLimitCents ? centsToDecimal(customer.requestedLimitCents) : "");
+  const [terms, setTerms] = useState(customer.paymentTerms);
+  const today = useBusinessToday();
+  const [start, setStart] = useState(today);
+  const formRef = useAutoFocus<HTMLFormElement>();
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    const cents = parseMoneyToCents(limit);
+    if (cents === null || cents <= 0) return fail("Enter a credit limit greater than 0, like 25000.");
+    void run(
+      { action: "approve", version: customer.version, creditLimitCents: cents, paymentTerms: terms, creditStartDate: start },
+      "Application approved.",
+    );
+  }
+
+  return (
+    <form ref={formRef} className="inline-form" style={{ marginTop: 10 }} onSubmit={submit} noValidate aria-label="Approve application">
+      {error ? <div className="form-error" role="alert" style={{ marginBottom: 0 }}>{error}</div> : null}
+      <div className="row">
+        <div className="col">
+          <label htmlFor="ap-limit">Credit limit ($)</label>
+          <input id="ap-limit" type="text" inputMode="decimal" value={limit} onChange={(e) => setLimit(e.target.value)} data-autofocus />
+        </div>
+        <div className="col">
+          <label htmlFor="ap-terms">Payment terms</label>
+          <select id="ap-terms" value={terms} onChange={(e) => setTerms(e.target.value)}>
+            {PAYMENT_TERMS.map((t) => <option key={t}>{t}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="col">
+        <label htmlFor="ap-start">Credit start date</label>
+        <input id="ap-start" type="date" value={start} onChange={(e) => setStart(e.target.value)} />
+      </div>
+      <div className="actions">
+        <button type="button" className="btn btn-sm" onClick={done}>Cancel</button>
+        <button type="submit" className="btn btn-sm btn-primary" disabled={pending}>{pending ? "Saving…" : "Confirm approval"}</button>
+      </div>
+    </form>
+  );
+}
+
+function ReasonForm({ customer, action, label, success, done }: {
+  customer: CustomerSummary; action: "deny" | "suspend"; label: string; success: string; done: () => void;
+}) {
+  const { run, error, pending } = useDecide(customer, done);
+  const [reason, setReason] = useState("");
+  const id = `reason-${action}`;
+  const formRef = useAutoFocus<HTMLFormElement>();
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    void run({ action, version: customer.version, reason }, success);
+  }
+
+  return (
+    <form ref={formRef} className="inline-form" style={{ marginTop: 10 }} onSubmit={submit} noValidate aria-label={label}>
+      {error ? <div className="form-error" role="alert" style={{ marginBottom: 0 }}>{error}</div> : null}
+      <div className="col">
+        <label htmlFor={id}>Reason (optional)</label>
+        <input id={id} type="text" value={reason} onChange={(e) => setReason(e.target.value)} data-autofocus />
+      </div>
+      <div className="actions">
+        <button type="button" className="btn btn-sm" onClick={done}>Cancel</button>
+        <button type="submit" className="btn btn-sm btn-danger" disabled={pending}>{pending ? "Saving…" : label}</button>
+      </div>
+    </form>
+  );
+}
+
+function InstantAction({ customer, action, label, success, primary }: {
+  customer: CustomerSummary; action: "start_review" | "reopen"; label: string; success: string; primary?: boolean;
+}) {
+  const { run, error, pending } = useDecide(customer, () => undefined);
+  return (
+    <>
+      <button type="button" className={`btn btn-sm${primary ? " btn-primary" : ""}`} disabled={pending} onClick={() => void run({ action, version: customer.version }, success)}>
+        {label}
+      </button>
+      {error ? <span className="field-error" role="alert">{error}</span> : null}
+    </>
+  );
+}
+
+export function DecisionPanel({ customer, active, setActive }: Props) {
+  const { user } = useUi();
+  const isAdmin = can(user.role, "decision.approve");
+  const { status } = customer;
+  const close = () => setActive(null);
+
+  const pendingApplication = status === "submitted" || status === "under_review";
+  if (!pendingApplication && status !== "approved" && status !== "denied" && status !== "suspended") return null;
+
+  return (
+    <div>
+      {pendingApplication ? (
+        <>
+          <div className="kv-label" style={{ marginBottom: 8 }}>Approval process</div>
+          <div className="action-row">
+            {status === "submitted" && can(user.role, "decision.start_review") ? (
+              <InstantAction customer={customer} action="start_review" label="Start review" success="Moved to under review." />
+            ) : null}
+            {isAdmin ? (
+              <>
+                <button type="button" className="btn btn-sm btn-primary" onClick={() => setActive("approve")}>Approve</button>
+                <button type="button" className="btn btn-sm btn-danger" onClick={() => setActive("deny")}>Deny</button>
+              </>
+            ) : (
+              <span className="field-hint">An admin makes approval decisions.</span>
+            )}
+          </div>
+        </>
+      ) : null}
+      {(status === "denied" || status === "suspended") && isAdmin ? (
+        <div className="action-row">
+          <InstantAction customer={customer} action="reopen" label="Reopen for review" success="Reopened for review." />
+        </div>
+      ) : null}
+      {status === "approved" && isAdmin ? (
+        <div className="action-row">
+          <button type="button" className="btn btn-sm btn-danger" onClick={() => setActive("suspend")}>Suspend credit</button>
+        </div>
+      ) : null}
+
+      {active === "approve" ? <ApproveForm customer={customer} done={close} /> : null}
+      {active === "deny" ? <ReasonForm customer={customer} action="deny" label="Confirm denial" success="Application denied." done={close} /> : null}
+      {active === "suspend" ? <ReasonForm customer={customer} action="suspend" label="Suspend credit" success="Credit suspended." done={close} /> : null}
+    </div>
+  );
+}

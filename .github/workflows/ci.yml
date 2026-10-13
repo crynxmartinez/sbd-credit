@@ -1,0 +1,51 @@
+name: CI
+
+# Runs on every push and pull request. It needs no database and no secrets: everything here is checked without
+# touching real data. The database and browser suites (npm run test:db, npm run e2e) are run on a developer machine
+# or a runner that has a safe test database; see docs/PRODUCTION.md.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install exactly what the lockfile says
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests, with the coverage threshold on the business logic
+        run: npx vitest run --coverage
+
+      # Proves the app builds on a machine with no database configured (the production build must not need one).
+      # Fonts are downloaded here, so this job needs internet access.
+      - name: Production build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+      # Fails if a dependency with a known high-severity problem is reachable at runtime. Dev-only tooling is excluded.
+      - name: Dependency audit (runtime dependencies only)
+        run: npm audit --omit=dev --audit-level=high

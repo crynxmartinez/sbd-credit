@@ -1,0 +1,139 @@
+/* Additions on top of the ported design. Same tokens, same feel. */
+
+/* ---------- Accessibility ---------- */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.skip-link {
+  position: absolute; left: 8px; top: -48px; z-index: 300; background: var(--navy); color: #fff;
+  padding: 8px 14px; border-radius: var(--radius-sm); font-weight: 600; text-decoration: none;
+}
+.skip-link:focus { top: 8px; }
+:root { --focus-ring: var(--navy-light); }
+:root[data-theme="dark"] { --focus-ring: var(--accent); }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sidebar :focus-visible { outline-color: #fff; }
+.field input, .field select, .field textarea, .inline-form input, .inline-form select { outline: none; }
+.field input:focus-visible, .field select:focus-visible, .field textarea:focus-visible,
+.inline-form input:focus-visible, .inline-form select:focus-visible {
+  border-color: var(--focus-ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 30%, transparent);
+}
+.search-box:focus-within { border-color: var(--focus-ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 30%, transparent); }
+.search-box input:focus-visible { outline: none; }
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ---------- Layout bits ---------- */
+a.nav-btn { text-decoration: none; }
+.nav-btn.as-button { width: 100%; }
+.sidebar-tools { display: flex; flex-direction: column; gap: 2px; margin-bottom: 8px; }
+.topbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.row-link {
+  background: none; border: none; padding: 0; color: inherit; font: inherit; font-weight: 600; text-align: left; cursor: pointer;
+}
+.row-link:hover { text-decoration: underline; }
+.alert-row { cursor: pointer; width: 100%; text-align: left; font: inherit; color: inherit; }
+.alert-row:focus-visible { outline-offset: -2px; }
+
+/* ---------- Sortable table headers ---------- */
+.th-sort {
+  background: none; border: none; padding: 0; font: inherit; color: inherit; text-transform: inherit;
+  letter-spacing: inherit; font-weight: inherit; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+}
+.th-sort:hover { color: var(--text); }
+.th-sort .arrow { font-size: 9px; opacity: 0.8; }
+th.num, td.num { text-align: right; }
+
+/* ---------- Aging strip ---------- */
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 26px; }
+.aging-bar { display: flex; height: 10px; border-radius: 6px; overflow: hidden; background: var(--surface-2); margin: 10px 0 14px 0; }
+.aging-seg { height: 100%; }
+.aging-seg.current { background: var(--green); }
+.aging-seg.d1_30 { background: #D7A53B; }
+.aging-seg.d31_60 { background: var(--amber); }
+.aging-seg.d61_90 { background: #C2553F; }
+.aging-seg.d90_plus { background: var(--red); }
+.aging-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px 16px; }
+.aging-key { display: flex; align-items: flex-start; gap: 8px; }
+.aging-swatch { width: 10px; height: 10px; border-radius: 3px; margin-top: 4px; flex-shrink: 0; }
+.aging-key .kv-label { margin-bottom: 1px; }
+.aging-key .mono { font-size: 14px; font-weight: 600; }
+
+/* ---------- Tabs (drawer) ---------- */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.tab {
+  background: none; border: none; border-bottom: 2px solid transparent; padding: 8px 12px; margin-bottom: -1px;
+  font-size: 13px; font-weight: 600; color: var(--text-dim);
+}
+.tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--navy-light); }
+:root[data-theme="dark"] .tab[aria-selected="true"] { border-bottom-color: var(--accent); }
+
+/* ---------- Ledger ---------- */
+.ledger-item { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+.ledger-item:last-child { border-bottom: none; }
+.ledger-main { font-weight: 600; }
+.ledger-sub { color: var(--text-dim); grid-column: 1; }
+.ledger-amount { font-family: var(--font-mono); font-weight: 600; text-align: right; grid-row: 1; grid-column: 2; }
+.ledger-amount.pay { color: var(--green); }
+.ledger-item.voided .ledger-main, .ledger-item.voided .ledger-amount { text-decoration: line-through; opacity: 0.6; }
+.ledger-actions { grid-column: 2; text-align: right; }
+.void-tag { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--red); margin-left: 6px; }
+.link-danger { background: none; border: none; color: var(--red); font-size: 12px; font-weight: 600; padding: 2px 0; }
+.link-danger:hover { text-decoration: underline; }
+.inline-form .field-error, .field .field-error { color: var(--red); font-size: 12px; }
+.inline-form label { font-size: 12px; font-weight: 600; color: var(--text-dim); }
+.inline-form .col { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+.inline-form textarea { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; background: var(--surface); color: var(--text); }
+.warn-note { background: var(--amber-bg); border: 1px solid var(--amber-line); color: var(--amber); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 12.5px; font-weight: 500; }
+
+/* ---------- States ---------- */
+.skeleton { background: linear-gradient(90deg, var(--surface-2), var(--border), var(--surface-2)); background-size: 200% 100%; animation: shimmer 1.4s infinite; border-radius: 6px; height: 14px; }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+.conn-note.err { color: var(--red); border-color: var(--red-line); background: var(--red-bg); border-style: solid; }
+.toast.err { background: var(--red); color: #fff; }
+.toast-wrap { pointer-events: none; }
+.toast { pointer-events: auto; }
+.form-error { background: var(--red-bg); border: 1px solid var(--red-line); color: var(--red); border-radius: var(--radius-sm); padding: 9px 12px; font-size: 13px; margin-bottom: 12px; }
+.field-hint a { color: inherit; }
+
+/* ---------- Login ---------- */
+.login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; background: var(--bg); }
+.login-card { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,0.12); overflow: hidden; }
+.login-brand { background: var(--navy); color: #fff; padding: 22px 24px; }
+.login-brand .brand-name { font-size: 22px; }
+.login-body { padding: 22px 24px 26px 24px; display: flex; flex-direction: column; gap: 14px; }
+.login-body .btn { justify-content: center; padding: 11px 15px; }
+
+/* ---------- Drawer / mobile ---------- */
+.drawer-overlay .drawer { box-shadow: -12px 0 40px rgba(0,0,0,0.2); }
+@media (max-width: 860px) {
+  .table-wrap table { min-width: 640px; }
+  .topbar-actions { width: 100%; }
+}
+
+/* ---------- Review fixes: contrast, focus, motion ---------- */
+/* Placeholders and input borders need 4.5:1 and 3:1 respectively. The page look is unchanged. */
+:root { --input-border: #7A8799; }
+:root[data-theme="dark"] { --input-border: #6B7688; }
+::placeholder { color: var(--text-dim); opacity: 1; }
+.field input, .field select, .field textarea,
+.inline-form input, .inline-form select, .inline-form textarea,
+.search-box { border-color: var(--input-border); }
+.field input[aria-invalid="true"], .field select[aria-invalid="true"], .field textarea[aria-invalid="true"] { border-color: var(--red); }
+
+/* An error toast must still look like an error in dark mode (the dark toast rule is more specific than .toast.err). */
+:root[data-theme="dark"] .toast.err { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-line); }
+
+/* The sticky drawer header must not cover whatever has keyboard focus. */
+.drawer { scroll-padding-top: 140px; }
+.kv-value { overflow-wrap: anywhere; }
+.tab:focus-visible, .th-sort:focus-visible, .row-link:focus-visible { outline-offset: 3px; }
+[role="tabpanel"]:focus-visible { outline-offset: 4px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+  * { animation-iteration-count: 1 !important; }
+}
+.mobile-topnav .pill { flex-shrink: 0; text-decoration: none; display: inline-flex; align-items: center; }

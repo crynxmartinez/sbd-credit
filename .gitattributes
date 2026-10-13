@@ -1,0 +1,13 @@
+# One line-ending style everywhere, so a file is byte-for-byte the same on every machine.
+* text=auto eol=lf
+
+# Prisma stores a checksum of each migration file. If Windows turned these into CRLF, the checksum would differ from the
+# one recorded when the migration was applied, and a Linux deploy would refuse them as "modified after being applied".
+*.sql text eol=lf
+prisma/migrations/** text eol=lf
+
+# Never touch binary files.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

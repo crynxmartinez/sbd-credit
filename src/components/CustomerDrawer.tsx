@@ -1,0 +1,165 @@
+"use client";
+
+import { useState, type KeyboardEvent } from "react";
+import { safeHref } from "@/lib/client/links";
+import { ApiClientError } from "@/lib/client/api";
+import { useCustomerDetail } from "@/lib/client/queries";
+import { formatDate } from "@/lib/domain/dates";
+import { formatCents } from "@/lib/domain/money";
+import { can } from "@/lib/domain/roles";
+import { CreditPanel } from "./drawer/CreditPanel";
+import { DecisionPanel } from "./drawer/DecisionPanel";
+import { HistoryList } from "./drawer/HistoryList";
+import { LedgerList } from "./drawer/LedgerList";
+import { CloseIcon } from "./icons";
+import { StatusBadge } from "./ui";
+import { useUi } from "./ui-context";
+import { useDialog } from "./useDialog";
+
+type Tab = "ledger" | "history";
+const TABS: readonly Tab[] = ["ledger", "history"];
+
+function Kv({ label, value, full }: { label: string; value: string; full?: boolean }) {
+  return (
+    <div className={`kv${full ? " full" : ""}`}>
+      <div className="kv-label">{label}</div>
+      <div className="kv-value">{value}</div>
+    </div>
+  );
+}
+
+export function CustomerDrawer({ id, onClose }: { id: string; onClose: () => void }) {
+  const { user, openEdit } = useUi();
+  const dialogRef = useDialog(onClose);
+  const { data, isLoading, error, refetch } = useCustomerDetail(id);
+  const gone = error instanceof ApiClientError && error.status === 404;
+  const [tab, setTab] = useState<Tab>("ledger");
+  // One inline form open at a time, across the credit and decision panels.
+  const [activeForm, setActiveForm] = useState<string | null>(null);
+
+  function onTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const index = TABS.indexOf(tab);
+    const target =
+      event.key === "ArrowRight" ? (index + 1) % TABS.length
+      : event.key === "ArrowLeft" ? (index - 1 + TABS.length) % TABS.length
+      : event.key === "Home" ? 0
+      : event.key === "End" ? TABS.length - 1
+      : null;
+    if (target === null) return;
+    event.preventDefault();
+    const next = TABS[target]!;
+    setTab(next);
+    document.getElementById(`tab-${next}`)?.focus();
+  }
+
+  const customer = data?.customer;
+  const link = safeHref(customer?.accountingProjectUrl);
+
+  return (
+    <div className="drawer-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div ref={dialogRef} className="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" tabIndex={-1}>
+        <div className="drawer-header">
+          <div className="drawer-header-top">
+            <div>
+              {customer ? <StatusBadge status={customer.status} /> : null}
+              <h2 className="drawer-title" id="drawer-title">
+                {customer?.businessName ?? (gone ? "Customer not found" : error ? "Couldn't load this customer" : "Loading…")}
+              </h2>
+            </div>
+            <button type="button" className="icon-btn" onClick={onClose} aria-label="Close customer details">
+              <CloseIcon />
+            </button>
+          </div>
+          {customer ? (
+            <div className="action-row" style={{ marginTop: 10 }}>
+              {can(user.role, "customer.edit") ? (
+                <button type="button" className="btn btn-sm" onClick={() => openEdit(customer)}>
+                  Edit
+                </button>
+              ) : null}
+              {link ? (
+                <a className="btn btn-sm" href={link} target="_blank" rel="noopener noreferrer">
+                  Open in {customer.accountingAppName || "accounting app"} ↗
+                </a>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div className="drawer-body">
+          {isLoading ? (
+            <>
+              <div className="skeleton" style={{ height: 90 }} />
+              <div className="skeleton" style={{ height: 140 }} />
+            </>
+          ) : null}
+          {error && !data ? (
+            <div className="form-error" role="alert">
+              {error.message}
+              {gone ? null : (
+                <div style={{ marginTop: 8 }}>
+                  <button type="button" className="btn btn-sm" onClick={() => refetch()}>
+                    Retry
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null}
+
+          {customer && data ? (
+            <>
+              {customer.status === "approved" || customer.status === "suspended" ? (
+                <CreditPanel customer={customer} active={activeForm} setActive={setActiveForm} />
+              ) : null}
+              <DecisionPanel customer={customer} active={activeForm} setActive={setActiveForm} />
+
+              <div>
+                <div className="kv-label" style={{ marginBottom: 8 }}>Details</div>
+                <div className="kv-grid">
+                  <Kv label="Contact" value={customer.contactName || "—"} />
+                  <Kv label="Phone" value={customer.phone || "—"} />
+                  <Kv label="Email" value={customer.email || "—"} full />
+                  <Kv label="Billing address" value={customer.billingAddress || "—"} full />
+                  <Kv label="Date applied" value={formatDate(customer.dateApplied)} />
+                  <Kv label="Requested limit" value={customer.requestedLimitCents ? formatCents(customer.requestedLimitCents) : "—"} />
+                  <Kv label="Credit start date" value={formatDate(customer.creditStartDate)} />
+                  <Kv label="Payment terms" value={customer.paymentTerms || "—"} />
+                </div>
+              </div>
+
+              {customer.notes ? (
+                <div>
+                  <div className="kv-label" style={{ marginBottom: 6 }}>Notes</div>
+                  <div className="kv-value" style={{ whiteSpace: "pre-wrap", color: "var(--text-dim)" }}>{customer.notes}</div>
+                </div>
+              ) : null}
+
+              <div>
+                <div className="tabs" role="tablist" aria-label="Customer activity" onKeyDown={onTabKeyDown}>
+                  {TABS.map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      role="tab"
+                      id={`tab-${name}`}
+                      aria-selected={tab === name}
+                      aria-controls="drawer-tabpanel"
+                      tabIndex={tab === name ? 0 : -1}
+                      className="tab"
+                      onClick={() => setTab(name)}
+                    >
+                      {name === "ledger" ? `Ledger (${data.ledger.length})` : "History"}
+                    </button>
+                  ))}
+                </div>
+                <div role="tabpanel" id="drawer-tabpanel" aria-labelledby={`tab-${tab}`} tabIndex={0}>
+                  {tab === "ledger" ? <LedgerList customerId={customer.id} ledger={data.ledger} /> : <HistoryList audit={data.audit} />}
+                </div>
+              </div>
+            </>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}

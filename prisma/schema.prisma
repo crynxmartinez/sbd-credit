@@ -1,0 +1,119 @@
+// Credit Tracker — Prisma schema.
+// Lives in its own Postgres schema (credit_dev while developing) on the shared database server.
+// Money is integer cents. The balance is never stored: it is computed from LedgerEntry rows.
+// String fields with app-level validation stand in for enums, matching the shipper app.
+// Every timestamp is timestamptz: it carries its zone, so a restore or a differently configured session cannot shift it.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// A person who can sign in. Roles match the shipper app: EMPLOYEE | ADMIN | SUPERADMIN.
+model AppUser {
+  id             String    @id @default(cuid())
+  username       String    @unique
+  name           String
+  role           String    @default("EMPLOYEE")
+  passwordHash   String
+  active         Boolean   @default(true)
+  /// Bumping this signs the user out everywhere.
+  sessionVersion Int       @default(1)
+  failedLogins   Int       @default(0)
+  lockedUntil    DateTime? @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+}
+
+model Customer {
+  id                   String    @id @default(cuid())
+  businessName         String
+  contactName          String?
+  phone                String?
+  email                String?
+  billingAddress       String?
+
+  /// submitted | under_review | approved | denied | suspended
+  status               String    @default("submitted")
+  dateApplied          DateTime  @db.Date
+  /// The day the customer entered their current status. The "waiting for a decision" clock runs from here.
+  statusChangedOn      DateTime  @db.Date
+  requestedLimitCents  Int?
+  creditLimitCents     Int       @default(0)
+  paymentTerms         String    @default("Net 30")
+  creditStartDate      DateTime? @db.Date
+
+  accountingAppName    String?
+  accountingProjectUrl String?
+  notes                String?
+
+  /// Sent by the browser once per form. A retry of the same submission finds the first result instead of repeating it.
+  requestKey           String?   @unique
+  /// Optimistic-concurrency counter: an edit made from a stale copy is refused instead of overwriting.
+  version              Int       @default(1)
+  createdAt            DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime  @updatedAt @db.Timestamptz(3)
+
+  ledger               LedgerEntry[]
+  audit                AuditEvent[]
+
+  @@index([businessName])
+}
+
+/// Append-only. A mistake is voided (one-way marker), never edited or deleted.
+model LedgerEntry {
+  id          String    @id @default(cuid())
+  customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  customerId  String
+  /// CHARGE | PAYMENT | ADJUSTMENT
+  type        String
+  /// Positive for CHARGE and PAYMENT, signed for ADJUSTMENT.
+  amountCents Int
+  entryDate   DateTime  @db.Date
+  /// When a charge falls due. Null falls back to entryDate.
+  dueDate     DateTime? @db.Date
+  /// Invoice or check number.
+  reference   String?
+  note        String?
+  createdBy   String
+  /// The user's id. createdBy is only the name at the time; names are not unique and can change.
+  createdById String?
+  /// One per form submission, unique per customer: a retried request finds this entry instead of adding a second.
+  requestKey  String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(3)
+
+  voidedAt    DateTime? @db.Timestamptz(3)
+  voidedBy    String?
+  voidedById  String?
+  voidReason  String?
+
+  auditEvents AuditEvent[]
+
+  @@unique([customerId, requestKey])
+  @@index([customerId, entryDate])
+}
+
+/// Append-only record of who did what. Written in the same transaction as the change it describes.
+model AuditEvent {
+  id            String       @id @default(cuid())
+  customer      Customer     @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  customerId    String
+  /// e.g. customer.created, customer.updated, decision.approve, ledger.payment, ledger.void
+  action        String
+  summary       String
+  /// Field-level before/after for edits.
+  changes       Json?
+  actor         String
+  /// The user's id. Display names are not unique, so this is what ties an event to one person.
+  actorId       String?
+  /// The ledger entry this event is about (a charge, payment, adjustment or void), so it can be traced exactly.
+  ledgerEntry   LedgerEntry? @relation(fields: [ledgerEntryId], references: [id], onDelete: Restrict)
+  ledgerEntryId String?
+  createdAt     DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@index([customerId, createdAt])
+}

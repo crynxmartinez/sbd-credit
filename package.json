@@ -1,0 +1,62 @@
+{
+  "name": "credit-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/with-dev-db.mjs next dev -p 3200 -H 127.0.0.1",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev-db": "node scripts/dev-db.mjs",
+    "with-dev-db": "node scripts/with-dev-db.mjs",
+    "prisma:generate": "prisma generate",
+    "postinstall": "node scripts/postinstall.mjs",
+    "seed:admin": "node scripts/with-dev-db.mjs tsx scripts/seed.ts admin",
+    "seed:demo": "node scripts/with-dev-db.mjs tsx scripts/seed.ts demo",
+    "seed": "node scripts/with-dev-db.mjs tsx scripts/seed.ts all",
+    "db:migrate": "node scripts/with-dev-db.mjs prisma migrate deploy",
+    "test:db": "node scripts/test-db.mjs",
+    "backup": "node scripts/with-dev-db.mjs tsx scripts/backup.ts",
+    "restore": "node scripts/with-dev-db.mjs tsx scripts/restore.ts",
+    "user": "node scripts/with-dev-db.mjs tsx scripts/users.ts",
+    "e2e": "node scripts/e2e.mjs"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "@tanstack/react-query": "^5.104.2",
+    "bcryptjs": "^3.0.3",
+    "next": "16.3.8",
+    "pg": "^8.23.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "server-only": "^0.0.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@playwright/test": "^1.64.0",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20",
+    "@types/pg": "^8.21.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vitest/coverage-v8": "^4.1.11",
+    "dotenv": "^17.4.2",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.8",
+    "prisma": "^7.10.0",
+    "tsx": "^4.23.12",
+    "typescript": "^5",
+    "vitest": "^4.1.10"
+  },
+  "allowScripts": {
+    "@prisma/engines@7.10.0": true,
+    "esbuild@0.28.2": true,
+    "prisma@7.10.0": true,
+    "unrs-resolver@1.12.2": true
+  }
+}
