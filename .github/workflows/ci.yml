@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -71,7 +71,7 @@ jobs:
       # The scripts read this when there is no .env.databases file. It is a throwaway server that exists only for this job.
       TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -103,7 +103,7 @@ jobs:
       TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
       SESSION_SECRET: ci-only-secret-for-the-throwaway-test-database-0123456789
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - uses: actions/setup-node@v4
