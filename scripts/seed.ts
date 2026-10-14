@@ -8,13 +8,13 @@
  */
 import { config } from "dotenv";
 import bcrypt from "bcryptjs";
+import { BCRYPT_COST } from "../src/lib/domain/users";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { adapterFor } from "../src/lib/server/db-url";
 import { addDays, dueDateFor, isoToDbDate, todayISO } from "../src/lib/domain/dates";
 
 config({ path: ".env.local", quiet: true });
 
-const BCRYPT_COST = 12;
 const ACTOR = "Demo seed";
 
 const connectionString = process.env.DATABASE_URL;

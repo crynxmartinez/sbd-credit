@@ -131,7 +131,8 @@ export const reversalSchema = z.object({
 });
 
 export const loginSchema = z.object({
-  username: z.string().trim().min(1, "Enter your username.").max(64),
+  // A staff username or a customer's email address.
+  username: z.string().trim().min(1, "Enter your username or email.").max(200),
   password: z.string().min(1, "Enter your password.").max(200),
 });
 

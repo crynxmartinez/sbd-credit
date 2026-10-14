@@ -60,8 +60,53 @@ model Customer {
 
   ledger               LedgerEntry[]
   audit                AuditEvent[]
+  portalUsers          CustomerUser[]
 
   @@index([businessName])
+}
+
+/// A person at a customer who may sign in to see THAT ONE customer's account. Kept apart from AppUser (staff) on purpose.
+/// Sign-in is by email, which always contains "@"; a staff username never does, so the two can never be the same name.
+model CustomerUser {
+  id             String    @id @default(cuid())
+  customer       Customer  @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  customerId     String
+  /// Stored lower-cased and trimmed (a CHECK enforces it), so one address is one account.
+  email          String    @unique
+  name           String
+  /// Null until the invitation is accepted.
+  passwordHash   String?
+  active         Boolean   @default(true)
+  /// Bumping this signs the person out everywhere.
+  sessionVersion Int       @default(1)
+  failedLogins   Int       @default(0)
+  lockedUntil    DateTime? @db.Timestamptz(3)
+  lastLoginAt    DateTime? @db.Timestamptz(3)
+  createdBy      String
+  createdById    String?
+  createdAt      DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @db.Timestamptz(3)
+
+  invites        PortalInvite[]
+
+  @@index([customerId])
+}
+
+/// One-time link that lets a contact set their password. Only the hash of the token is stored. At most one is live per
+/// person (a partial unique index in the migration), and a newer one revokes the older.
+model PortalInvite {
+  id             String       @id @default(cuid())
+  customerUser   CustomerUser @relation(fields: [customerUserId], references: [id], onDelete: Restrict)
+  customerUserId String
+  tokenHash      String       @unique
+  expiresAt      DateTime     @db.Timestamptz(3)
+  usedAt         DateTime?    @db.Timestamptz(3)
+  revokedAt      DateTime?    @db.Timestamptz(3)
+  createdBy      String
+  createdById    String?
+  createdAt      DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@index([customerUserId])
 }
 
 /// Append-only. A mistake is voided (one-way marker), never edited or deleted.

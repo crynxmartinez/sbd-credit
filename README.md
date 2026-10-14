@@ -1,6 +1,8 @@
 # Credit Tracker — Steel Building Depot
 
-Tracks credit applications, approvals, credit limits, balances and payment reminders. A rebuild of the original
+Tracks credit applications, approvals, credit limits, balances and payment reminders, for staff, and gives each customer a
+page of their own (sign in on the same page with their email) showing what they can buy on credit, what is due and their
+history. Staff invite customers from the customer screen. See `docs/PORTAL_PLAN.md`. A rebuild of the original
 single-file artifact (kept in `legacy/` as the design reference) with the same look and the same core idea, on a real
 database.
 

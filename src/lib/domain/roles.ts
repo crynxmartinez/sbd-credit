@@ -16,6 +16,7 @@ export type Action =
   | "decision.suspend"
   | "decision.reopen"
   | "export"
+  | "portal.manage"
   | "users.manage";
 
 /** The lowest role that may perform each action. Roles match the shipper app. */
@@ -34,6 +35,8 @@ const MINIMUM_ROLE: Readonly<Record<Action, Role>> = {
   "decision.suspend": "ADMIN",
   "decision.reopen": "ADMIN",
   export: "ADMIN",
+  // Offering, resending and disabling customer sign-in: it decides who may see a customer account.
+  "portal.manage": "ADMIN",
   "users.manage": "SUPERADMIN",
 };
 

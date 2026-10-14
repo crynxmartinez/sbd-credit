@@ -1,29 +1,13 @@
 import "server-only";
-import { cookies } from "next/headers";
 import { can, isRole, type Action } from "@/lib/domain/roles";
 import type { SessionUser } from "@/lib/types";
 import { ApiError } from "../http";
 import { prisma } from "../db";
 import { log } from "../log";
-import { SESSION_TTL_MS, signSession, verifySession } from "./token";
-
-const COOKIE_NAME = "credit_session";
-
-function secret(): string {
-  const value = process.env.SESSION_SECRET;
-  if (!value) throw new Error("SESSION_SECRET is not set. Add it to .env.local (see .env.example).");
-  return value;
-}
+import { clearSessionCookie, readSessionPayload, setSessionCookie } from "./session-cookies";
 
 export async function startSession(user: { id: string; sessionVersion: number }): Promise<void> {
-  const store = await cookies();
-  store.set(COOKIE_NAME, signSession(user, secret(), Date.now()), {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: SESSION_TTL_MS / 1000,
-  });
+  await setSessionCookie("staff", user);
 }
 
 /**
@@ -31,12 +15,10 @@ export async function startSession(user: { id: string; sessionVersion: number })
  * lifetime. Bumping sessionVersion makes every outstanding token for this user fail the check in userFromCookie.
  */
 export async function endSession(): Promise<{ revoked: boolean }> {
-  const store = await cookies();
-  const token = store.get(COOKIE_NAME)?.value;
-  const payload = token ? verifySession(token, secret(), Date.now()) : null;
+  const payload = await readSessionPayload("staff");
 
   // First, so this browser is signed out whatever happens to the database next.
-  store.delete(COOKIE_NAME);
+  await clearSessionCookie("staff");
   if (!payload) return { revoked: true };
 
   try {
@@ -57,9 +39,7 @@ function toSessionUser(user: { id: string; username: string; name: string; role:
 }
 
 async function userFromCookie(): Promise<SessionUser | null> {
-  const token = (await cookies()).get(COOKIE_NAME)?.value;
-  if (!token) return null;
-  const payload = verifySession(token, secret(), Date.now());
+  const payload = await readSessionPayload("staff");
   if (!payload) return null;
 
   const user = await prisma.appUser.findUnique({ where: { id: payload.u } });

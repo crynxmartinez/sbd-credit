@@ -72,3 +72,45 @@ describe("inBatches", () => {
     expect(inBatches([1, 2, 3, 4], 2)).toEqual([[1, 2], [3, 4]]);
   });
 });
+
+describe("customer portal contacts in a backup", () => {
+  const contact = {
+    id: "p1", customerId: "c1", email: "dana@example.com", name: "Dana", active: true, sessionVersion: 4,
+    lastLoginAt: "2026-10-10T10:00:00.000Z", createdBy: "Admin", createdById: "u1",
+    createdAt: "2026-10-02T10:00:00.000Z", updatedAt: "2026-10-03T10:00:00.000Z",
+  };
+  const withContacts = (rows: unknown[] = [contact]) =>
+    file({ portalContacts: rows, counts: { customers: 1, ledger: 1, audit: 1, portalContacts: rows.length } });
+
+  test("an older backup with no portal section still restores, with no contacts", () => {
+    expect(reviveBackup(file()).portalContacts).toEqual([]);
+  });
+
+  test("dates come back as dates, and a missing last sign-in stays empty", () => {
+    const revived = reviveBackup(withContacts([contact, { ...contact, id: "p2", email: "x@example.com", lastLoginAt: null }]));
+    expect(revived.portalContacts[0]!.lastLoginAt).toBeInstanceOf(Date);
+    expect(revived.portalContacts[1]!.lastLoginAt).toBeNull();
+    expect(revived.portalContacts[0]!.createdAt).toBeInstanceOf(Date);
+  });
+
+  test("the session version goes UP by one, so a cookie issued before the backup can never be accepted again", () => {
+    expect(reviveBackup(withContacts()).portalContacts[0]!.sessionVersion).toBe(5);
+    expect(reviveBackup(withContacts([{ ...contact, sessionVersion: undefined }])).portalContacts[0]!.sessionVersion).toBe(2);
+  });
+
+  test("a backup row can never carry a credential into a restore, whatever the file says", () => {
+    const row = reviveBackup(withContacts([{ ...contact, passwordHash: "x", failedLogins: 9, lockedUntil: "2099-01-01T00:00:00.000Z" }])).portalContacts[0]!;
+    expect(row).not.toHaveProperty("passwordHash");
+    expect(row).not.toHaveProperty("failedLogins");
+    expect(row).not.toHaveProperty("lockedUntil");
+  });
+
+  test("is refused when a contact points at a customer that is not in the backup, or the count disagrees", () => {
+    expect(() => reviveBackup(withContacts([{ ...contact, customerId: "ghost" }]))).toThrow(/customer that is not in the backup/);
+    expect(() => reviveBackup(file({ portalContacts: [contact], counts: { customers: 1, ledger: 1, audit: 1, portalContacts: 3 } }))).toThrow(/incomplete.*portalContacts/);
+  });
+
+  test("an email may appear only once", () => {
+    expect(() => reviveBackup(withContacts([contact, { ...contact, id: "p2" }]))).toThrow(/same email/);
+  });
+});

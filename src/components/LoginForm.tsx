@@ -2,9 +2,15 @@
 
 import { useState, type FormEvent } from "react";
 import { ApiClientError, apiFetch } from "@/lib/client/api";
+import { safeNextFor, type SignInKind } from "@/lib/safe-next";
 import { Field } from "./ui";
 
-export function LoginForm({ next = "/", unavailable = false }: { next?: string; unavailable?: boolean }) {
+interface SignedIn {
+  kind: SignInKind;
+}
+
+/** One sign-in page for staff and customers. The server says which kind of person signed in; that decides where they land. */
+export function LoginForm({ next, unavailable = false }: { next?: string; unavailable?: boolean }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -12,12 +18,13 @@ export function LoginForm({ next = "/", unavailable = false }: { next?: string; 
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (pending) return;
     setPending(true);
     setError(null);
     try {
-      await apiFetch("/api/auth/login", { method: "POST", body: { username, password } });
+      const who = await apiFetch<SignedIn>("/api/auth/login", { method: "POST", body: { username, password } });
       // A full load, so the server renders the signed-in app with the new session cookie.
-      window.location.assign(next);
+      window.location.assign(safeNextFor(who.kind, next));
     } catch (caught) {
       setError(caught instanceof ApiClientError ? caught.message : "Could not sign in. Please try again.");
       setPending(false);
@@ -33,7 +40,7 @@ export function LoginForm({ next = "/", unavailable = false }: { next?: string; 
             <br />
             DEPOT
           </h1>
-          <div className="brand-sub">Credit Application Tracker · Sign in</div>
+          <div className="brand-sub">Credit · Sign in</div>
         </div>
         <div className="login-body">
           {unavailable ? (
@@ -46,8 +53,8 @@ export function LoginForm({ next = "/", unavailable = false }: { next?: string; 
               {error}
             </div>
           ) : null}
-          <Field id="login_username" label="Username">
-            <input id="login_username" type="text" autoComplete="username" autoCapitalize="none" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus required />
+          <Field id="login_username" label="Username or email">
+            <input id="login_username" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} value={username} onChange={(e) => setUsername(e.target.value)} autoFocus required />
           </Field>
           <Field id="login_password" label="Password">
             <input id="login_password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />

@@ -1,5 +1,5 @@
 /**
- * JSON backup of every customer, ledger entry and audit event, taken as ONE consistent snapshot.
+ * JSON backup of every customer, ledger entry, audit event and customer portal contact, taken as ONE consistent snapshot.
  *
  *   npm run backup
  *
@@ -28,11 +28,16 @@ async function main(): Promise<void> {
       const customers = await tx.customer.findMany({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
       const ledger = await tx.ledgerEntry.findMany({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
       const audit = await tx.auditEvent.findMany({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+      // Never the password hash, failure counts or lock: a backup holds no credential. Invitation links are not kept either.
+      const portalContacts = await tx.customerUser.findMany({
+        select: { id: true, customerId: true, email: true, name: true, active: true, sessionVersion: true, lastLoginAt: true, createdBy: true, createdById: true, createdAt: true, updatedAt: true },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
       const users = await tx.appUser.findMany({
         select: { id: true, username: true, name: true, role: true, active: true },
         orderBy: { username: "asc" },
       });
-      return { customers, ledger, audit, users };
+      return { customers, ledger, audit, users, portalContacts };
     },
     { isolationLevel: "RepeatableRead", timeout: 120_000 },
   );
@@ -42,10 +47,11 @@ async function main(): Promise<void> {
     format: BACKUP_FORMAT,
     schema,
     takenAt: new Date().toISOString(),
-    counts: { customers: snapshot.customers.length, ledger: snapshot.ledger.length, audit: snapshot.audit.length },
+    counts: { customers: snapshot.customers.length, ledger: snapshot.ledger.length, audit: snapshot.audit.length, portalContacts: snapshot.portalContacts.length },
     customers: snapshot.customers,
     ledger: snapshot.ledger,
     audit: snapshot.audit,
+    portalContacts: snapshot.portalContacts,
     users: snapshot.users,
   };
 
@@ -58,7 +64,7 @@ async function main(): Promise<void> {
   renameSync(partialPath, finalPath);
 
   console.log(`backup written: ${finalPath}`);
-  console.log(`  ${file.counts.customers} customers, ${file.counts.ledger} ledger entries, ${file.counts.audit} audit events, ${file.users.length} users (no password hashes)`);
+  console.log(`  ${file.counts.customers} customers, ${file.counts.ledger} ledger entries, ${file.counts.audit} audit events, ${file.counts.portalContacts} customer contacts, ${file.users.length} users (no password hashes)`);
 }
 
 main()

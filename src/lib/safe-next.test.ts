@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { safeNextPath } from "./safe-next";
+import { safeNextFor, safeNextPath } from "./safe-next";
 
 describe("safeNextPath", () => {
   test.each(["/", "/customers", "/customers?status=approved&q=steel", "/?c=abc123", "/customers?c=x#top"])("keeps the local path %s", (path) => {
@@ -31,5 +31,23 @@ describe("safeNextPath", () => {
   test("handles missing input and a custom fallback", () => {
     expect(safeNextPath(null)).toBe("/");
     expect(safeNextPath(undefined, "/customers")).toBe("/customers");
+  });
+});
+
+describe("safeNextFor", () => {
+  test("a customer only ever lands inside the customer pages", () => {
+    expect(safeNextFor("customer", "/portal")).toBe("/portal");
+    expect(safeNextFor("customer", "/portal/statements?m=09")).toBe("/portal/statements?m=09");
+    for (const value of ["/customers", "/api/customers", "/portalx", "/portal/../customers", "/portal/%2e%2e/customers", "//evil.example", "https://evil.example", "/", undefined, null, ""]) {
+      expect(safeNextFor("customer", value)).toBe("/portal");
+    }
+  });
+
+  test("staff never get sent to the customer pages", () => {
+    expect(safeNextFor("staff", "/customers?status=approved")).toBe("/customers?status=approved");
+    expect(safeNextFor("staff", "/portal")).toBe("/");
+    expect(safeNextFor("staff", "/portal/anything")).toBe("/");
+    expect(safeNextFor("staff", "//evil.example")).toBe("/");
+    expect(safeNextFor("staff", undefined)).toBe("/");
   });
 });

@@ -1,4 +1,5 @@
 import { assertSafeTarget } from "./db-url";
+import { publicBaseUrl } from "./public-url";
 
 const MIN_SECRET_LENGTH = 32;
 
@@ -30,6 +31,15 @@ export function validateEnvironment(env: Env): string[] {
 
   // The shortcut that skips sign-in must never be on in a real deployment, even though the code also ignores it there.
   if (production && env.CREDIT_DEV_AUTOLOGIN) problems.push("CREDIT_DEV_AUTOLOGIN must not be set in production.");
+
+  // Invitation links are built from this, never from the request, so a forged Host header cannot redirect a customer.
+  if (production || env.PUBLIC_BASE_URL) {
+    try {
+      publicBaseUrl(env);
+    } catch (error) {
+      problems.push(error instanceof Error ? error.message : "PUBLIC_BASE_URL is not usable.");
+    }
+  }
 
   if (env.BUSINESS_TIME_ZONE) {
     try {

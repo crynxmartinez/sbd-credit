@@ -55,8 +55,15 @@ Set these on the host. The app refuses to start, and says exactly which is wrong
 | `DATABASE_URL` | Direct address, as `credit_app`, ending `?schema=credit` |
 | `SESSION_SECRET` | 32+ random characters, unique to this app |
 | `BUSINESS_TIME_ZONE` | e.g. `America/Chicago` |
-| `TRUSTED_PROXY_HOPS` | How many proxies sit in front of the app (default 1). Wrong values let one person dodge the login rate limit. |
+| `TRUSTED_PROXY_HOPS` | How many proxies sit in front of the app (default 1). Wrong values let one person dodge the login rate limit. The proxy MUST set `X-Forwarded-For`: without it every visitor shares one rate-limit bucket, and 20 wrong attempts would block sign-in for everyone. |
+| `PUBLIC_BASE_URL` | The address customers use, `https://...`. Customer invitation links are built from it, never from the request, so a forged `Host` header cannot send a customer to another site. The app refuses to start without it. |
 | `NODE_ENV` | `production` |
+
+**Deploying the customer portal for the first time signs every staff member out once**, because sessions are now signed with
+a key derived from `SESSION_SECRET` instead of the secret itself. Nothing is lost; people sign in again.
+
+After deploying, check the customer pages are never cached: `curl -sI https://<your-address>/portal` and `/accept-invite` must
+show `Cache-Control: no-store, max-age=0` and `X-Robots-Tag: noindex`, and `/accept-invite` must show `Referrer-Policy: no-referrer`.
 
 `CREDIT_DEV_AUTOLOGIN` must **not** be set. The app also ignores it in production, and refuses to start if it is present.
 

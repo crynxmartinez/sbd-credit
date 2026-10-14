@@ -2,7 +2,7 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { todayISO } from "@/lib/domain/dates";
-import type { CustomerDetail, CustomerListDto } from "@/lib/types";
+import type { CustomerDetail, CustomerListDto, PortalContactDto, PortalInviteResult } from "@/lib/types";
 import type { CustomerCreateInput, CustomerUpdateInput, DecisionInput, LedgerEntryInput } from "@/lib/validation";
 import { apiFetch } from "./api";
 
@@ -107,6 +107,48 @@ export function useVoidEntry(id: string) {
         method: "POST",
         body: { reason: input.reason },
       }),
+    onSettled: refresh,
+  });
+}
+
+/** The people at a customer who may sign in to the customer portal (admins only). */
+export function usePortalContacts(customerId: string) {
+  return useQuery({
+    queryKey: ["portal-contacts", customerId],
+    queryFn: () => apiFetch<PortalContactDto[]>(`${customerPath(customerId)}/portal`),
+  });
+}
+
+function useRefreshContacts(customerId: string) {
+  const client = useQueryClient();
+  return () => Promise.all([client.invalidateQueries({ queryKey: ["portal-contacts", customerId] }), client.invalidateQueries({ queryKey: ["customer", customerId] })]);
+}
+
+export function useInviteContact(customerId: string) {
+  const refresh = useRefreshContacts(customerId);
+  return useMutation({
+    mutationFn: (input: { name: string; email: string }) => apiFetch<PortalInviteResult>(`${customerPath(customerId)}/portal`, { method: "POST", body: input }),
+    onSettled: refresh,
+    // The result holds the one-time link: do not keep it around once nothing is showing it.
+    gcTime: 0,
+  });
+}
+
+export function useReinviteContact(customerId: string) {
+  const refresh = useRefreshContacts(customerId);
+  return useMutation({
+    mutationFn: (contactId: string) =>
+      apiFetch<PortalInviteResult>(`${customerPath(customerId)}/portal/${encodeURIComponent(contactId)}/reinvite`, { method: "POST" }),
+    onSettled: refresh,
+    gcTime: 0,
+  });
+}
+
+export function useSetContactActive(customerId: string) {
+  const refresh = useRefreshContacts(customerId);
+  return useMutation({
+    mutationFn: (input: { contactId: string; active: boolean }) =>
+      apiFetch<PortalContactDto>(`${customerPath(customerId)}/portal/${encodeURIComponent(input.contactId)}`, { method: "PATCH", body: { active: input.active } }),
     onSettled: refresh,
   });
 }

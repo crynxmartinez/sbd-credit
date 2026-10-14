@@ -3,7 +3,10 @@ import { ROLES, isRole, type Role } from "./roles";
 /** Rules for creating and changing sign-in accounts. Pure, so the same checks serve the command line and any future screen. */
 
 export const MIN_PASSWORD_LENGTH = 12;
-const MAX_PASSWORD_LENGTH = 200;
+/** bcrypt only uses the first 72 bytes, so a longer password would silently be cut short. Refuse it instead. */
+const MAX_PASSWORD_BYTES = 72;
+/** The cost of every password hash. One place, so sign-in, invitations and the command-line tools always agree. */
+export const BCRYPT_COST = 12;
 const USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,31}$/;
 
 export interface NewUser {
@@ -16,10 +19,13 @@ export interface NewUser {
 /** Usernames are case-insensitive at sign-in, so they are stored lower-cased. */
 export const normalizeUsername = (value: string): string => value.trim().toLowerCase();
 
+/** What was typed on the sign-in page (a staff username or a customer email), made comparable: folded, trimmed, lower-cased. */
+export const normalizeIdentifier = (value: string): string => value.normalize("NFKC").trim().toLowerCase();
+
 export function validatePassword(password: string, username: string): string[] {
   const problems: string[] = [];
   if (password.length < MIN_PASSWORD_LENGTH) problems.push(`The password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
-  if (password.length > MAX_PASSWORD_LENGTH) problems.push(`The password must be at most ${MAX_PASSWORD_LENGTH} characters.`);
+  if (new TextEncoder().encode(password).length > MAX_PASSWORD_BYTES) problems.push(`The password must be at most ${MAX_PASSWORD_BYTES} bytes long (accented and non-English characters count as more than one).`);
   if (username && password.toLowerCase().includes(username.toLowerCase())) problems.push("The password must not contain the username.");
   if (new Set(password).size < 4) problems.push("The password is too repetitive.");
   return problems;

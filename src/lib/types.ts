@@ -2,6 +2,7 @@ import type { Alert, UtilizationLevel } from "./domain/alerts";
 import type { AgingBucket, CustomerStatus, LedgerType } from "./domain/constants";
 import type { FieldChange } from "./domain/diff";
 import type { Aging } from "./domain/ledger";
+import type { ContactStatus } from "./domain/portal-users";
 import type { Role } from "./domain/roles";
 
 /** What the API sends to the browser. Dates are "YYYY-MM-DD" or ISO timestamps, money is integer cents. */
@@ -124,3 +125,21 @@ export interface ApiFailure {
 }
 
 export type ApiResponse<T> = ApiSuccess<T> | ApiFailure;
+
+/** One person at a customer who may sign in to the customer portal. Never carries a password hash or a link token. */
+export interface PortalContactDto {
+  id: string;
+  name: string;
+  email: string;
+  status: ContactStatus;
+  lastLoginAt: string | null;
+  /** When the live invitation runs out, if there is one. */
+  inviteExpiresAt: string | null;
+}
+
+/** What creating or re-sending an invitation returns. The link is shown once and is never available again. */
+export interface PortalInviteResult {
+  contact: PortalContactDto;
+  link: string;
+  expiresAt: string;
+}

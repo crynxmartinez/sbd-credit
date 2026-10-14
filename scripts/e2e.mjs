@@ -27,6 +27,9 @@ const baseEnv = {
   CREDIT_DEV_AUTOLOGIN: "", // present but empty: the real sign-in screen is exercised
   // The suite signs in far more often than a person would, all from one address. The limiter itself is tested separately.
   LOGIN_ATTEMPTS_PER_ADDRESS: "10000",
+  LOGIN_ATTEMPTS_PER_ACCOUNT: "10000",
+  // Where invitation links point. They are only ever read by the tests, never followed over the network.
+  PUBLIC_BASE_URL: `http://127.0.0.1:${PORT}`,
   E2E_ADMIN_USERNAME: "e2e.admin",
   E2E_ADMIN_PASSWORD: adminPassword,
   E2E_EMPLOYEE_USERNAME: "e2e.employee",

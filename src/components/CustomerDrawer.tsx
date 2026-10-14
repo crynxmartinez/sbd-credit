@@ -6,10 +6,12 @@ import { ApiClientError } from "@/lib/client/api";
 import { useCustomerDetail } from "@/lib/client/queries";
 import { formatDate } from "@/lib/domain/dates";
 import { formatCents } from "@/lib/domain/money";
+import { canInviteTo } from "@/lib/domain/portal-users";
 import { can } from "@/lib/domain/roles";
 import { CreditPanel } from "./drawer/CreditPanel";
 import { DecisionPanel } from "./drawer/DecisionPanel";
 import { HistoryList } from "./drawer/HistoryList";
+import { PortalAccessPanel, type IssuedLink } from "./drawer/PortalAccessPanel";
 import { LedgerList } from "./drawer/LedgerList";
 import { CloseIcon } from "./icons";
 import { StatusBadge } from "./ui";
@@ -30,7 +32,13 @@ function Kv({ label, value, full }: { label: string; value: string; full?: boole
 
 export function CustomerDrawer({ id, onClose }: { id: string; onClose: () => void }) {
   const { user, openEdit } = useUi();
-  const dialogRef = useDialog(onClose);
+  // An invitation link is shown once and cannot be recovered, so closing the drawer with one on screen asks first.
+  const [issuedLink, setIssuedLink] = useState<IssuedLink | null>(null);
+  function requestClose() {
+    if (issuedLink && !window.confirm("The invitation link on screen is shown only once and cannot be shown again. Close anyway?")) return;
+    onClose();
+  }
+  const dialogRef = useDialog(requestClose);
   const { data, isLoading, error, refetch } = useCustomerDetail(id);
   const gone = error instanceof ApiClientError && error.status === 404;
   const [tab, setTab] = useState<Tab>("ledger");
@@ -56,7 +64,7 @@ export function CustomerDrawer({ id, onClose }: { id: string; onClose: () => voi
   const link = safeHref(customer?.accountingProjectUrl);
 
   return (
-    <div className="drawer-overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div className="drawer-overlay" onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
       <div ref={dialogRef} className="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" tabIndex={-1}>
         <div className="drawer-header">
           <div className="drawer-header-top">
@@ -66,7 +74,7 @@ export function CustomerDrawer({ id, onClose }: { id: string; onClose: () => voi
                 {customer?.businessName ?? (gone ? "Customer not found" : error ? "Couldn't load this customer" : "Loading…")}
               </h2>
             </div>
-            <button type="button" className="icon-btn" onClick={onClose} aria-label="Close customer details">
+            <button type="button" className="icon-btn" onClick={requestClose} aria-label="Close customer details">
               <CloseIcon />
             </button>
           </div>
@@ -112,6 +120,7 @@ export function CustomerDrawer({ id, onClose }: { id: string; onClose: () => voi
                 <CreditPanel customer={customer} active={activeForm} setActive={setActiveForm} />
               ) : null}
               <DecisionPanel customer={customer} active={activeForm} setActive={setActiveForm} />
+              {can(user.role, "portal.manage") && canInviteTo(customer.status) ? <PortalAccessPanel customerId={customer.id} issued={issuedLink} onIssuedChange={setIssuedLink} /> : null}
 
               <div>
                 <div className="kv-label" style={{ marginBottom: 8 }}>Details</div>

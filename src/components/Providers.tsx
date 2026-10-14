@@ -1,18 +1,9 @@
 "use client";
 
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { ToastProvider } from "./Toast";
 
-const STALE_MS = 5_000;
-
+/** What every page needs. The staff app's data library is added only inside the staff layout, see QueryProviders. */
 export function Providers({ children }: { children: ReactNode }) {
-  const [client] = useState(
-    () => new QueryClient({ defaultOptions: { queries: { staleTime: STALE_MS, retry: 1, refetchOnWindowFocus: true } } }),
-  );
-  return (
-    <QueryClientProvider client={client}>
-      <ToastProvider>{children}</ToastProvider>
-    </QueryClientProvider>
-  );
+  return <ToastProvider>{children}</ToastProvider>;
 }

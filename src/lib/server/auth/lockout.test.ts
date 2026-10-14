@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  CUSTOMER_FAILURE_ALERT_EVERY,
   LOCKOUT_MS,
   MAX_FAILED_LOGINS,
   afterFailure,
@@ -7,6 +8,7 @@ import {
   isLocked,
   lockExpired,
   lockedUntilFor,
+  shouldAlertOnCustomerFailures,
 } from "./lockout";
 
 const NOW = new Date("2026-10-13T12:00:00Z");
@@ -53,5 +55,19 @@ describe("lockout", () => {
 
   test("success clears everything", () => {
     expect(afterSuccess()).toEqual({ failedLogins: 0, lockedUntil: null });
+  });
+});
+
+describe("customer failures", () => {
+  test("a customer is never locked by a count of wrong guesses: their email is easy to find, so a stranger could lock them out", () => {
+    expect(lockedUntilFor(1_000_000, NOW, Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  test("but a run of failures is raised, so someone notices: at every Nth failure", () => {
+    expect(shouldAlertOnCustomerFailures(0)).toBe(false);
+    expect(shouldAlertOnCustomerFailures(CUSTOMER_FAILURE_ALERT_EVERY - 1)).toBe(false);
+    expect(shouldAlertOnCustomerFailures(CUSTOMER_FAILURE_ALERT_EVERY)).toBe(true);
+    expect(shouldAlertOnCustomerFailures(CUSTOMER_FAILURE_ALERT_EVERY + 1)).toBe(false);
+    expect(shouldAlertOnCustomerFailures(CUSTOMER_FAILURE_ALERT_EVERY * 3)).toBe(true);
   });
 });

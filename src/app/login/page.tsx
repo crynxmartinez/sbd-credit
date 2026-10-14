@@ -1,24 +1,27 @@
 import { redirect } from "next/navigation";
 import { LoginForm } from "@/components/LoginForm";
-import { safeNextPath } from "@/lib/safe-next";
+import { safeNextFor } from "@/lib/safe-next";
+import { getCurrentCustomerUser } from "@/lib/server/auth/customer-session";
 import { getCurrentUser } from "@/lib/server/auth/current-user";
 import { log } from "@/lib/server/log";
 
 export const dynamic = "force-dynamic";
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
-  const destination = safeNextPath((await searchParams).next);
+  const { next } = await searchParams;
 
-  let signedIn = false;
+  let signedIn: "staff" | "customer" | null = null;
   let unavailable = false;
   try {
-    signedIn = (await getCurrentUser()) !== null;
+    if (await getCurrentUser()) signedIn = "staff";
+    else if (await getCurrentCustomerUser()) signedIn = "customer";
   } catch (error) {
     // The database being down must not take the sign-in page with it: show it, and say what is wrong.
     log("error", "login.session_check_failed", { error });
     unavailable = true;
   }
-  if (signedIn) redirect(destination);
+  // Already signed in: go where this kind of person belongs (never a staff page for a customer, or the reverse).
+  if (signedIn) redirect(safeNextFor(signedIn, next));
 
-  return <LoginForm next={destination} unavailable={unavailable} />;
+  return <LoginForm next={next} unavailable={unavailable} />;
 }

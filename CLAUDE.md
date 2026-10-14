@@ -25,6 +25,8 @@ Own app, same Postgres database server as the Storage Materials shipper app.
 - `npm run user -- list|create|reset-password|deactivate|activate` — sign-in accounts
 - `npm run e2e` — Playwright (Edge) against `credit_test_e2e`; run it after any UI or auth change
 - Production runbook: `docs/PRODUCTION.md`
+- Customer portal: Phase 1 built; plan and what is next in `docs/PORTAL_PLAN.md`
+- `npm run test:db -- <name>` runs only the integration test files whose name contains it (e.g. `portal`)
 
 ## Layout
 - `src/lib/domain/` pure rules (no database, no clock): money, dates, ledger + aging, alerts, status, roles
@@ -41,6 +43,9 @@ Own app, same Postgres database server as the Storage Materials shipper app.
 - Ledger types: CHARGE adds; PAYMENT and WRITE_OFF reduce; ADJUSTMENT and REVERSAL are signed. `effectOnBalance()` in `domain/ledger.ts` is the one place that knows the sign. The SQL in `services/ledger.ts` mirrors it, so change both together.
 - A void is only for the current business month. Older entries are corrected by a reversal dated today (`reverseEntry`). A reversal is never posted directly, never reversed, and never voided; a reversed entry is never voided.
 - A write-off and a reversal always carry a reason (also a CHECK constraint). Write-offs and reversals are ADMIN actions.
+- Customer portal: customers are `CustomerUser`, a separate table and cookie from staff (`AppUser`). The two never share a role column, and `src/lib/portal-boundaries.test.ts` fails if portal code reaches staff services or the reverse.
+- What a customer may see is whitelisted in `domain/portal.ts` (`toPortalView`), field by field. Never pass a customer-facing page a staff object. A customer is never locked out by wrong passwords (their email is guessable); see `auth/lockout.ts`.
+- Invitation links are built from `PUBLIC_BASE_URL` (never the request Host) with the token in the URL fragment. Only the token's hash is stored. Accepting and re-sending lock the contact row, so they are race-safe.
 - Dates are local calendar dates (`YYYY-MM-DD`), never `toISOString().slice(0, 10)`.
 - Roles follow the shipper app: EMPLOYEE | ADMIN | SUPERADMIN. Approve, deny, suspend and limit changes need ADMIN or above.
 

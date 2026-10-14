@@ -5,8 +5,11 @@
  *
  * Rebuilds the credit_test schema from the migrations, runs every *.int.test.ts file against it, and leaves it in
  * place so a failure can be inspected. Nothing outside credit_test is touched.
+ *
+ *   npm run test:db -- portal      only the files whose name contains "portal"
  */
 import { spawnSync } from "node:child_process";
+import { joinCommand } from "./lib/shell.mjs";
 
 const env = { ...process.env, CREDIT_DEV_SCHEMA: "credit_test" };
 
@@ -21,4 +24,5 @@ function step(label, command) {
 
 step("reset the credit_test schema", "node scripts/dev-db.mjs reset");
 step("apply migrations", "node scripts/with-dev-db.mjs prisma migrate deploy");
-step("run integration tests", "node scripts/with-dev-db.mjs vitest run --config vitest.int.config.mts");
+const filters = process.argv.slice(2);
+step("run integration tests", joinCommand(["node", "scripts/with-dev-db.mjs", "vitest", "run", "--config", "vitest.int.config.mts", ...filters]));

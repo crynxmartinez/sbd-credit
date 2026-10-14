@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { MIN_PASSWORD_LENGTH, normalizeUsername, validateNewUser, validatePassword } from "./users";
+import { MIN_PASSWORD_LENGTH, normalizeIdentifier, normalizeUsername, validateNewUser, validatePassword } from "./users";
 
 const good = { username: "dana.whitfield", name: "Dana Whitfield", role: "ADMIN", password: "correct-horse-battery-9" };
 
@@ -53,5 +53,24 @@ describe("validatePassword", () => {
 
   test("refuses an absurdly long one", () => {
     expect(validatePassword("ab12".repeat(60), "u").join(" ")).toMatch(/at most/);
+  });
+});
+
+describe("passwords longer than the hash can use", () => {
+  test("a password over 72 bytes is refused: bcrypt would silently ignore the rest, so two long passwords could match", () => {
+    expect(validatePassword("a1".repeat(36) + "x", "u").join(" ")).toMatch(/at most 72 bytes/);
+    expect(validatePassword("a1b2c3d4e5f6".repeat(6), "u")).toEqual([]);
+  });
+
+  test("it counts bytes, not characters", () => {
+    expect(validatePassword("é1".repeat(25) + "ab", "u").join(" ")).toMatch(/at most 72/);
+  });
+});
+
+describe("normalizeIdentifier", () => {
+  test("trims, lower-cases and folds look-alike characters, so one person is one account however it was typed", () => {
+    expect(normalizeIdentifier("  Bob@X.com ")).toBe("bob@x.com");
+    expect(normalizeIdentifier("ＢＯＢ＠Ｘ．ｃｏｍ")).toBe("bob@x.com");
+    expect(normalizeIdentifier("Dana.Whitfield")).toBe("dana.whitfield");
   });
 });

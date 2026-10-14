@@ -19,6 +19,15 @@ function daysAgo(days: number): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
+/**
+ * The business day, as the SERVER sees it. The browser's own date can be a day ahead of the books (in the evening in the
+ * US, or just after midnight here), and an entry dated "tomorrow" does not count yet.
+ */
+async function serverToday(): Promise<string> {
+  const response = await page.request.get("/api/customers");
+  return (await response.json()).data.asOf as string;
+}
+
 test.beforeAll(async ({ browser }) => {
   page = await (await browser.newContext()).newPage();
   await signIn(page, ADMIN);
@@ -37,7 +46,7 @@ test.beforeAll(async ({ browser }) => {
     creditStartDate: daysAgo(60),
   });
   oldChargeId = (await post(`/api/customers/${customerId}/ledger`, { type: "CHARGE", amountCents: 400_00, entryDate: daysAgo(40), reference: "INV-OLD" })).id;
-  await post(`/api/customers/${customerId}/ledger`, { type: "CHARGE", amountCents: 100_00, entryDate: daysAgo(0), reference: "INV-NEW" });
+  await post(`/api/customers/${customerId}/ledger`, { type: "CHARGE", amountCents: 100_00, entryDate: await serverToday(), reference: "INV-NEW" });
 });
 test.afterAll(async () => page.context().close());
 

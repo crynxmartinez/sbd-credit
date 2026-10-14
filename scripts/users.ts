@@ -15,10 +15,9 @@
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { normalizeUsername, validateNewUser, validatePassword } from "../src/lib/domain/users";
+import { normalizeUsername, validateNewUser, validatePassword, BCRYPT_COST } from "../src/lib/domain/users";
 import { adapterFor } from "../src/lib/server/db-url";
 
-const BCRYPT_COST = 12;
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error("DATABASE_URL is not set. Run this through `npm run user`.");
