@@ -39,7 +39,9 @@ async function main(): Promise<void> {
       });
       return { customers, ledger, audit, users, portalContacts };
     },
-    { isolationLevel: "RepeatableRead", timeout: 120_000 },
+    // maxWait: how long to wait for a connection to START the transaction. The default is 2 seconds, which a remote database
+    // can exceed on a cold connection, and the backup would fail before reading anything.
+    { isolationLevel: "RepeatableRead", timeout: 120_000, maxWait: 30_000 },
   );
 
   const schema = schemaFromUrl(connectionString as string) ?? "unknown";
