@@ -50,7 +50,7 @@ jobs:
 
       # Fails if a dependency with a known high-severity problem is reachable at runtime. Dev-only tooling is excluded.
       - name: Dependency audit (runtime dependencies only)
-        run: npm audit --omit=dev --audit-level=high
+        run: node scripts/audit-gate.mjs
 
   database:
     runs-on: ubuntu-latest

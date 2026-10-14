@@ -160,8 +160,8 @@ export function CustomerTable({ customers, variant, loading, sort, onSort, capti
   const columns = variant === "full" ? FULL_COLUMNS.length : RECENT_COLUMNS.length;
   return (
     <>
-    {variant === "full" && !loading ? <div className="cards-only"><CustomerCards customers={customers} caption={caption} /></div> : null}
-    <div className={`table-wrap${variant === "full" ? " table-only" : ""}`}>
+    {!loading ? <div className="cards-only"><CustomerCards customers={customers} caption={caption} /></div> : null}
+    <div className={`table-wrap${loading ? "" : " table-only"}`}>
       <table aria-busy={loading ? true : undefined}>
         <caption className="sr-only">{caption}</caption>
         <thead>

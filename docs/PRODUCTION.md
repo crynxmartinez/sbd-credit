@@ -128,7 +128,7 @@ show `Referrer-Policy: no-referrer`.
 
 **Node 22 or newer.** Install in full (`npm ci`, which includes the dev dependencies): the migration tool (`prisma`), the
 account tool (`tsx`) and `dotenv` are dev dependencies **on purpose**. Moving them to runtime dependencies would put their
-advisories in the production audit, and they are not code the running app executes. After migrating you may run
+advisories in the production audit, and they are not code the running app executes. (`prisma` is also an optional peer of the database client, so the production audit lists it and its dependencies `@prisma/config`, `deepmerge-ts` and `mysql2` anyway. CI runs `scripts/audit-gate.mjs`, which tolerates exactly that Prisma tool chain and fails on any other high or critical finding. Remove the allowance when Prisma ships a fixed release.) After migrating you may run
 `npm prune --omit=dev` and start the app from the pruned install.
 
 1. **Back up first.** A database-level dump (the real recovery path; it also holds password hashes, so treat it as a secret).
