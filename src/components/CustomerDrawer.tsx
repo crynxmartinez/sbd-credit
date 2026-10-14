@@ -8,11 +8,13 @@ import { formatDate } from "@/lib/domain/dates";
 import { formatCents } from "@/lib/domain/money";
 import { canInviteTo } from "@/lib/domain/portal-users";
 import { can } from "@/lib/domain/roles";
+import { showsCreditPanel } from "@/lib/domain/status";
 import { CreditPanel } from "./drawer/CreditPanel";
 import { DecisionPanel } from "./drawer/DecisionPanel";
 import { HistoryList } from "./drawer/HistoryList";
 import { PortalAccessPanel, type IssuedLink } from "./drawer/PortalAccessPanel";
 import { LedgerList } from "./drawer/LedgerList";
+import { DataStatus } from "./DataStatus";
 import { CloseIcon } from "./icons";
 import { StatusBadge } from "./ui";
 import { useUi } from "./ui-context";
@@ -34,16 +36,17 @@ export function CustomerDrawer({ id, onClose }: { id: string; onClose: () => voi
   const { user, openEdit } = useUi();
   // An invitation link is shown once and cannot be recovered, so closing the drawer with one on screen asks first.
   const [issuedLink, setIssuedLink] = useState<IssuedLink | null>(null);
+  // One inline form open at a time, across the credit and decision panels.
+  const [activeForm, setActiveForm] = useState<string | null>(null);
   function requestClose() {
     if (issuedLink && !window.confirm("The invitation link on screen is shown only once and cannot be shown again. Close anyway?")) return;
+    if (activeForm !== null && !window.confirm("You have a form open that has not been saved. Close anyway?")) return;
     onClose();
   }
   const dialogRef = useDialog(requestClose);
-  const { data, isLoading, error, refetch } = useCustomerDetail(id);
+  const { data, isLoading, isError, error, refetch, dataUpdatedAt } = useCustomerDetail(id);
   const gone = error instanceof ApiClientError && error.status === 404;
   const [tab, setTab] = useState<Tab>("ledger");
-  // One inline form open at a time, across the credit and decision panels.
-  const [activeForm, setActiveForm] = useState<string | null>(null);
 
   function onTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const index = TABS.indexOf(tab);
@@ -114,16 +117,20 @@ export function CustomerDrawer({ id, onClose }: { id: string; onClose: () => voi
             </div>
           ) : null}
 
+          {/* If a refresh fails the figures below are old: say how old, instead of showing them as current. */}
+          {data ? <DataStatus what="this customer" query={{ isError, error, dataUpdatedAt, hasData: true, refetch }} /> : null}
+
           {customer && data ? (
             <>
-              {customer.status === "approved" || customer.status === "suspended" ? (
+              {/* A credit line, or ANY account that still owes or is owed money (a denied or reopened customer who has not paid). */}
+              {showsCreditPanel(customer.status, customer.balanceCents) ? (
                 <CreditPanel customer={customer} active={activeForm} setActive={setActiveForm} />
               ) : null}
               <DecisionPanel customer={customer} active={activeForm} setActive={setActiveForm} />
               {can(user.role, "portal.manage") && canInviteTo(customer.status) ? <PortalAccessPanel customerId={customer.id} issued={issuedLink} onIssuedChange={setIssuedLink} /> : null}
 
               <div>
-                <div className="kv-label" style={{ marginBottom: 8 }}>Details</div>
+                <h3 className="kv-label" style={{ marginBottom: 8 }}>Details</h3>
                 <div className="kv-grid">
                   <Kv label="Contact" value={customer.contactName || "—"} />
                   <Kv label="Phone" value={customer.phone || "—"} />
@@ -138,7 +145,7 @@ export function CustomerDrawer({ id, onClose }: { id: string; onClose: () => voi
 
               {customer.notes ? (
                 <div>
-                  <div className="kv-label" style={{ marginBottom: 6 }}>Notes</div>
+                  <h3 className="kv-label" style={{ marginBottom: 6 }}>Notes</h3>
                   <div className="kv-value" style={{ whiteSpace: "pre-wrap", color: "var(--text-dim)" }}>{customer.notes}</div>
                 </div>
               ) : null}

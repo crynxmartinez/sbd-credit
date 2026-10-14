@@ -1,13 +1,16 @@
 import "server-only";
 import { Prisma } from "@/generated/prisma/client";
-import type { LedgerType } from "@/lib/domain/constants";
+import type { CustomerStatus, LedgerType } from "@/lib/domain/constants";
 import { dbDateToIso, dueDateFor, isInClosedMonth, isoToDbDate } from "@/lib/domain/dates";
+import { entryDateIssue } from "@/lib/domain/entry-dates";
+import { sameLedgerSubmission } from "@/lib/domain/idempotency";
 import { effectOnBalance, reversalFor } from "@/lib/domain/ledger";
 import { formatCents } from "@/lib/domain/money";
 import { can, type Action } from "@/lib/domain/roles";
+import { canTakePayment } from "@/lib/domain/status";
 import type { SessionUser } from "@/lib/types";
 import type { LedgerEntryInput, ReversalInput } from "@/lib/validation";
-import { businessToday } from "../as-of";
+import { systemClock, type Clock } from "../clock";
 import { ApiError } from "../http";
 import { transaction } from "../tx";
 import { writeAudit } from "./audit";
@@ -52,11 +55,12 @@ function describeAmount(type: LedgerType, amountCents: number): string {
 
 const withReference = (text: string, reference: string | null): string => (reference ? `${text} (${reference})` : text);
 
-/** Money can still be owed after a suspension, denial or reopening, so payments are accepted wherever there is a ledger. */
-function assertCanTakePayment(status: string, hasEntries: boolean): void {
-  if (hasEntries || status === "approved" || status === "suspended") return;
-  throw new ApiError(409, "invalid_state", "This account has no balance to change.");
-}
+const keyReuse = () =>
+  new ApiError(
+    409,
+    "request_key_reuse",
+    "That was already recorded with different details. Reload the customer to see what was saved, then enter any change as a new entry.",
+  );
 
 interface LockedCustomer {
   status: string;
@@ -67,69 +71,130 @@ interface LockedCustomer {
 /**
  * Locks the customer row for the rest of the transaction and returns its current values, in ONE statement. Anything
  * else that wants this customer (a suspension, an edit, another entry) waits for this transaction to finish, so what
- * is read afterwards cannot change underneath it. `requireStatus` makes the status part of the lock itself, so a
- * suspension that committed first is seen as "no row" rather than being raced past.
+ * is read afterwards cannot change underneath it.
  */
-async function lockCustomer(tx: Prisma.TransactionClient, customerId: string, requireStatus?: string): Promise<LockedCustomer> {
+async function lockCustomer(tx: Prisma.TransactionClient, customerId: string): Promise<LockedCustomer> {
   const rows = await tx.$queryRaw<LockedCustomer[]>`
     UPDATE "Customer" SET "updatedAt" = now()
-    WHERE "id" = ${customerId} ${requireStatus ? Prisma.sql`AND "status" = ${requireStatus}` : Prisma.empty}
+    WHERE "id" = ${customerId}
     RETURNING "status", "paymentTerms", "creditLimitCents"`;
   const row = rows[0];
-  if (row) return row;
-
-  const exists = await tx.customer.findUnique({ where: { id: customerId }, select: { id: true } });
-  if (!exists) throw new ApiError(404, "not_found", "That customer no longer exists.");
-  throw new ApiError(409, "invalid_state", "Charges can only be added to an approved account.");
+  if (!row) throw new ApiError(404, "not_found", "That customer no longer exists.");
+  return row;
 }
 
-/** The balance and the number of live entries, summed by the database so the whole ledger never travels to Node. */
-async function balanceOf(
+/**
+ * The balance counting entries dated on or before `throughDate`, and the number of live entries of ANY date, summed by
+ * the database so the whole ledger never travels to Node. The SQL sign rule mirrors effectOnBalance in domain/ledger.ts:
+ * a test checks the two agree for every ledger type.
+ */
+export async function balanceOf(
   tx: Prisma.TransactionClient,
   customerId: string,
-  /** Only count entries dated on or before this day. Without it every live entry counts, post-dated ones included. */
-  throughDate?: string,
+  throughDate: string,
 ): Promise<{ balanceCents: number; entries: number }> {
   const [row] = await tx.$queryRaw<{ total: bigint; entries: number }[]>`
-    SELECT COALESCE(SUM(CASE WHEN "type" IN ('PAYMENT', 'WRITE_OFF') THEN -"amountCents" ELSE "amountCents" END), 0)::bigint AS total,
+    SELECT COALESCE(SUM(CASE WHEN "type" IN ('PAYMENT', 'WRITE_OFF') THEN -"amountCents" ELSE "amountCents" END)
+                    FILTER (WHERE "entryDate" <= ${isoToDbDate(throughDate)}), 0)::bigint AS total,
            COUNT(*)::int AS entries
-    FROM "LedgerEntry" WHERE "customerId" = ${customerId} AND "voidedAt" IS NULL
-    ${throughDate ? Prisma.sql`AND "entryDate" <= ${isoToDbDate(throughDate)}` : Prisma.empty}`;
+    FROM "LedgerEntry" WHERE "customerId" = ${customerId} AND "voidedAt" IS NULL`;
   return { balanceCents: Number(row?.total ?? BigInt(0)), entries: row?.entries ?? 0 };
 }
 
-/** A write-off gives up on money that is owed, so it cannot be dated ahead, and cannot exceed what is owed that day. */
-async function assertWritableOff(tx: Prisma.TransactionClient, customerId: string, input: LedgerEntryInput): Promise<void> {
-  if (input.entryDate > businessToday()) {
-    throw new ApiError(422, "invalid_entry", "A write-off cannot be dated in the future.");
-  }
-  const { balanceCents: owed } = await balanceOf(tx, customerId, input.entryDate);
-  if (owed <= 0) throw new ApiError(409, "nothing_owed", "Nothing is owed as of that date, so there is nothing to write off.");
+/** The dates of the write-offs still in force (not voided, not undone by a reversal), optionally only those on or after `from`. */
+async function liveWriteOffDates(tx: Prisma.TransactionClient, customerId: string, from: string | null): Promise<string[]> {
+  const rows = await tx.$queryRaw<{ entryDate: Date }[]>`
+    SELECT DISTINCT w."entryDate" FROM "LedgerEntry" w
+    WHERE w."customerId" = ${customerId} AND w."type" = 'WRITE_OFF' AND w."voidedAt" IS NULL
+      AND (${from}::date IS NULL OR w."entryDate" >= ${from}::date)
+      AND NOT EXISTS (SELECT 1 FROM "LedgerEntry" r WHERE r."reversesEntryId" = w."id" AND r."voidedAt" IS NULL)`;
+  return rows.map((row) => dbDateToIso(row.entryDate) ?? "").filter(Boolean);
+}
+
+/**
+ * A write-off gives up on money that is owed, so it cannot be dated ahead, and cannot exceed what is owed BOTH on its own
+ * date and today: a write-off backdated to before the customer paid would otherwise leave a negative balance.
+ */
+async function assertWritableOff(tx: Prisma.TransactionClient, customerId: string, input: LedgerEntryInput, today: string, owedToday: number): Promise<void> {
+  if (input.entryDate > today) throw new ApiError(422, "invalid_entry", "A write-off cannot be dated in the future.");
+  const { balanceCents: owedThen } = await balanceOf(tx, customerId, input.entryDate);
+  const owed = Math.min(owedThen, owedToday);
+  if (owed <= 0) throw new ApiError(409, "nothing_owed", "Nothing is owed, so there is nothing to write off.");
   if (input.amountCents > owed) {
     throw new ApiError(409, "exceeds_balance", `You can write off at most ${formatCents(owed, { fixed: true })}, which is what is owed.`);
   }
 }
 
-export async function recordEntry(customerId: string, input: LedgerEntryInput, actor: SessionUser): Promise<RecordResult> {
+/**
+ * Taking a charge out of the books (a void or a reversal) lowers what is owed. If a write-off was relying on that charge,
+ * the balance would go negative while the write-off still says the debt was given up: money that was never owed, or worse,
+ * a later charge silently absorbed by a write-off that was meant for this one.
+ *
+ * A void removes the charge from its own date onward, so only write-offs dated on or after it can depend on it, and each one
+ * must still be covered on ITS date. A reversal takes effect today, so what matters is that today's balance stays at or
+ * above zero while any write-off stands. `effectFrom` is the entry's date for a void, null for a reversal.
+ */
+async function assertNoWriteOffDependsOn(
+  tx: Prisma.TransactionClient,
+  customerId: string,
+  effectCents: number,
+  today: string,
+  effectFrom: string | null,
+): Promise<void> {
+  if (effectCents <= 0) return;
+  const writeOffDates = await liveWriteOffDates(tx, customerId, effectFrom);
+  if (writeOffDates.length === 0) return;
+  for (const date of [...writeOffDates, today]) {
+    const { balanceCents } = await balanceOf(tx, customerId, date);
+    if (balanceCents - effectCents < 0) {
+      throw new ApiError(409, "write_off_covers", "A write-off covers this charge. Reverse the write-off first, then correct the charge.");
+    }
+  }
+}
+
+function toDateErrors(issue: { code: string; message: string }): ApiError {
+  return issue.code === "closed_month"
+    ? new ApiError(403, "closed_month_admin_only", issue.message)
+    : new ApiError(422, "invalid_entry", issue.message);
+}
+
+export async function recordEntry(customerId: string, input: LedgerEntryInput, actor: SessionUser, clock: Clock = systemClock): Promise<RecordResult> {
   const permission = POST_PERMISSION[input.type];
   if (permission && !can(actor.role, permission.action)) throw new ApiError(403, "forbidden", permission.message);
+  const today = clock.today();
 
   return transaction(async (tx) => {
-    const customer = await lockCustomer(tx, customerId, input.type === "CHARGE" ? "approved" : undefined);
+    const customer = await lockCustomer(tx, customerId);
 
-    // A retry of a submission that already went through (a lost response, a double click) returns the first result.
+    // A retry of a submission that already went through (a lost response, a double click) returns the first result,
+    // provided it really is the same submission. This comes first, so a retry still succeeds after a later suspension.
     if (input.requestKey) {
       const earlier = await tx.ledgerEntry.findUnique({
         where: { customerId_requestKey: { customerId, requestKey: input.requestKey } },
-        select: { id: true },
+        select: { id: true, type: true, amountCents: true, entryDate: true, dueDate: true, reference: true, note: true },
       });
-      if (earlier) return { id: earlier.id, warning: null, duplicate: true, postDated: false };
+      if (earlier) {
+        const stored = { ...earlier, entryDate: dbDateToIso(earlier.entryDate) ?? "", dueDate: dbDateToIso(earlier.dueDate) };
+        if (!sameLedgerSubmission(stored, input)) throw keyReuse();
+        return { id: earlier.id, warning: null, duplicate: true, postDated: false };
+      }
     }
 
-    const { balanceCents: before, entries } = await balanceOf(tx, customerId);
-    if (input.type !== "CHARGE") assertCanTakePayment(customer.status, entries > 0);
+    const issue = entryDateIssue(actor.role, input.entryDate, today);
+    if (issue) throw toDateErrors(issue);
 
-    if (input.type === "WRITE_OFF") await assertWritableOff(tx, customerId, input);
+    // A charge, and an adjustment that raises what is owed, are new credit: only an approved account may have them.
+    const addsDebt = input.type === "CHARGE" || (input.type === "ADJUSTMENT" && input.amountCents > 0);
+    if (addsDebt && customer.status !== "approved") {
+      throw new ApiError(409, "invalid_state", "Charges can only be added to an approved account.");
+    }
+
+    // Everything below is judged on today's books: an entry dated ahead has not happened yet.
+    const { balanceCents: before, entries } = await balanceOf(tx, customerId, today);
+    if (input.type !== "CHARGE" && !canTakePayment(customer.status as CustomerStatus, entries > 0)) {
+      throw new ApiError(409, "invalid_state", "This account has no balance to change.");
+    }
+    if (input.type === "WRITE_OFF") await assertWritableOff(tx, customerId, input, today, before);
 
     const after = before + effectOnBalance(input.type, input.amountCents);
     const keepsDueDate = input.type === "CHARGE" || input.type === "ADJUSTMENT";
@@ -163,7 +228,7 @@ export async function recordEntry(customerId: string, input: LedgerEntryInput, a
       actorId: actor.id,
       ledgerEntryId: created.id,
     });
-    return { id: created.id, warning, duplicate: false, postDated: input.entryDate > businessToday() };
+    return { id: created.id, warning, duplicate: false, postDated: input.entryDate > today };
   });
 }
 
@@ -171,7 +236,7 @@ export async function recordEntry(customerId: string, input: LedgerEntryInput, a
  * A void takes an entry out of the books as if it never happened, which is right for a typo in the current month and
  * wrong for anything already reported: that is corrected with a reversal dated today instead.
  */
-async function assertVoidable(tx: Prisma.TransactionClient, entry: { id: string; type: string; entryDate: Date }): Promise<void> {
+async function assertVoidable(tx: Prisma.TransactionClient, entry: { id: string; type: string; entryDate: Date }, today: string): Promise<void> {
   if (entry.type === "REVERSAL") {
     throw new ApiError(409, "not_voidable", "A reversal cannot be voided. Record the original entry again instead.");
   }
@@ -179,7 +244,7 @@ async function assertVoidable(tx: Prisma.TransactionClient, entry: { id: string;
   if (reversal) {
     throw new ApiError(409, "already_reversed", "That entry has been reversed, so it cannot also be voided.");
   }
-  if (isInClosedMonth(dbDateToIso(entry.entryDate) ?? "", businessToday())) {
+  if (isInClosedMonth(dbDateToIso(entry.entryDate) ?? "", today)) {
     throw new ApiError(409, "closed_month", "That entry is from a month that is already closed. Reverse it instead: that records a correction dated today and leaves the past month as it was.");
   }
 }
@@ -194,8 +259,9 @@ export interface ReverseResult {
  * Cancels an earlier entry with a new, opposite one dated today (never earlier than the entry itself). The original is
  * left untouched, so figures already reported for its month stay true. An entry can be reversed once.
  */
-export async function reverseEntry(customerId: string, entryId: string, input: ReversalInput, actor: SessionUser): Promise<ReverseResult> {
+export async function reverseEntry(customerId: string, entryId: string, input: ReversalInput, actor: SessionUser, clock: Clock = systemClock): Promise<ReverseResult> {
   if (!can(actor.role, "ledger.reverse")) throw new ApiError(403, "forbidden", "Only an admin can reverse an entry.");
+  const today = clock.today();
 
   return transaction(async (tx) => {
     await lockCustomer(tx, customerId);
@@ -203,9 +269,12 @@ export async function reverseEntry(customerId: string, entryId: string, input: R
     if (input.requestKey) {
       const earlier = await tx.ledgerEntry.findUnique({
         where: { customerId_requestKey: { customerId, requestKey: input.requestKey } },
-        select: { id: true },
+        select: { id: true, reversesEntryId: true, note: true },
       });
-      if (earlier) return { id: earlier.id, duplicate: true };
+      if (earlier) {
+        if (earlier.reversesEntryId !== entryId || earlier.note !== input.reason) throw keyReuse();
+        return { id: earlier.id, duplicate: true };
+      }
     }
 
     const original = await tx.ledgerEntry.findFirst({ where: { id: entryId, customerId } });
@@ -213,7 +282,7 @@ export async function reverseEntry(customerId: string, entryId: string, input: R
     if (original.voidedAt) throw new ApiError(409, "already_voided", "That entry was voided, so it has no effect to reverse.");
 
     const type = original.type as LedgerType;
-    const offset = reversalFor({ type, amountCents: original.amountCents, entryDate: dbDateToIso(original.entryDate) ?? "" }, businessToday());
+    const offset = reversalFor({ type, amountCents: original.amountCents, entryDate: dbDateToIso(original.entryDate) ?? "" }, today);
     if (!offset) throw new ApiError(409, "not_reversible", "A reversal cannot be reversed. Record the original entry again instead.");
 
     const already = await tx.ledgerEntry.findUnique({ where: { reversesEntryId: entryId }, select: { id: true, createdById: true, note: true } });
@@ -222,6 +291,7 @@ export async function reverseEntry(customerId: string, entryId: string, input: R
       if (already.createdById === actor.id && already.note === input.reason) return { id: already.id, duplicate: true };
       throw new ApiError(409, "already_reversed", "That entry has already been reversed.");
     }
+    await assertNoWriteOffDependsOn(tx, customerId, effectOnBalance(type, original.amountCents), today, null);
 
     const created = await tx.ledgerEntry.create({
       data: {
@@ -250,9 +320,10 @@ export async function reverseEntry(customerId: string, entryId: string, input: R
   });
 }
 
-export async function voidEntry(customerId: string, entryId: string, reason: string, actor: SessionUser): Promise<void> {
+export async function voidEntry(customerId: string, entryId: string, reason: string, actor: SessionUser, clock: Clock = systemClock): Promise<void> {
   // Checked here as well as in the route, so a future caller cannot bypass it.
   if (!can(actor.role, "ledger.void")) throw new ApiError(403, "forbidden", "Only an admin can void an entry.");
+  const today = clock.today();
 
   await transaction(async (tx) => {
     // Customer first, then the entry: the same order every writer uses, so two writers can never wait on each other.
@@ -265,12 +336,13 @@ export async function voidEntry(customerId: string, entryId: string, reason: str
       if (entry.voidedById === actor.id && entry.voidReason === reason) return;
       throw new ApiError(409, "already_voided", "That entry has already been voided.");
     }
-    await assertVoidable(tx, entry);
+    await assertVoidable(tx, entry, today);
 
     const type = entry.type as LedgerType;
+    await assertNoWriteOffDependsOn(tx, customerId, effectOnBalance(type, entry.amountCents), today, dbDateToIso(entry.entryDate));
     await tx.ledgerEntry.update({
       where: { id: entryId },
-      data: { voidedAt: new Date(), voidedBy: actor.name, voidedById: actor.id, voidReason: reason },
+      data: { voidedAt: clock.now(), voidedBy: actor.name, voidedById: actor.id, voidReason: reason },
     });
     await writeAudit(tx, {
       customerId,

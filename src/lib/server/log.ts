@@ -19,32 +19,54 @@ const MAX_DEPTH = 4;
 const CREDENTIAL_URL = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"@/]+@[^\s'"]+/gi;
 export const scrubUrls = (text: string): string => text.replace(CREDENTIAL_URL, "[url]");
 
-function redact(value: unknown, depth = 0): unknown {
+function redact(value: unknown, depth = 0, seen: WeakSet<object> = new WeakSet()): unknown {
   if (value instanceof Error) return describeError(value);
+  if (typeof value === "bigint") return value.toString();
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? "[invalid date]" : value.toISOString();
   if (typeof value === "string") {
     const scrubbed = scrubUrls(value);
     return scrubbed.length > MAX_STRING ? `${scrubbed.slice(0, MAX_STRING)}…` : scrubbed;
   }
-  if (value === null || typeof value !== "object" || depth >= MAX_DEPTH) return value;
-  if (Array.isArray(value)) return value.map((item) => redact(item, depth + 1));
+  if (value === null || typeof value !== "object" || depth >= MAX_DEPTH) return typeof value === "object" && value !== null ? "[too deep]" : value;
+  // A structure that contains itself would recurse until the stack ran out; mark it instead.
+  if (seen.has(value)) return "[circular]";
+  seen.add(value);
+  if (Array.isArray(value)) return value.map((item) => redact(item, depth + 1, seen));
   return Object.fromEntries(
-    Object.entries(value).map(([key, inner]) => [key, SENSITIVE_KEY.test(key) ? "[redacted]" : redact(inner, depth + 1)]),
+    Object.entries(value).map(([key, inner]) => [key, SENSITIVE_KEY.test(key) ? "[redacted]" : redact(inner, depth + 1, seen)]),
   );
 }
+
+/**
+ * A Prisma message can quote the values of the row involved (an email, a name) after its first line, so for those errors
+ * only the first line is kept. The code and the SQLSTATE are what a person needs to diagnose it.
+ */
+const isPrismaError = (error: Error): boolean => /^PrismaClient/.test(error.name) || /^Invalid `?prisma\./.test(error.message);
 
 export function describeError(error: unknown): Record<string, unknown> {
   if (!(error instanceof Error)) return { message: scrubUrls(String(error)).slice(0, MAX_STRING) };
   // A database error can quote the connection string, and the stack repeats the message, so both are scrubbed.
   const stack = error.stack?.split("\n").slice(0, 8).join("\n");
+  const message = isPrismaError(error) ? (error.message.split("\n")[0] ?? "") : error.message;
+  const extra = error as { code?: unknown; meta?: { code?: unknown }; cause?: unknown };
   return {
     name: error.name,
-    message: scrubUrls(error.message).slice(0, MAX_STRING),
-    stack: stack ? scrubUrls(stack) : undefined,
+    message: scrubUrls(message).slice(0, MAX_STRING),
+    ...(typeof extra.code === "string" ? { code: extra.code } : {}),
+    ...(typeof extra.meta?.code === "string" ? { sqlstate: extra.meta.code } : {}),
+    ...(extra.cause !== undefined ? { cause: scrubUrls(String(extra.cause instanceof Error ? extra.cause.message : extra.cause)).slice(0, MAX_STRING) } : {}),
+    // Prisma's stack repeats its multi-line message (with the quoted values), so it is left out for those.
+    stack: stack && !isPrismaError(error) ? scrubUrls(stack) : undefined,
   };
 }
 
 export function formatLogLine(level: Level, event: string, fields: Fields = {}, now: Date = new Date()): string {
-  return JSON.stringify({ time: now.toISOString(), level, event, ...(redact(fields) as Fields) });
+  try {
+    return JSON.stringify({ time: now.toISOString(), level, event, ...(redact(fields) as Fields) });
+  } catch {
+    // Logging must never be the thing that fails, least of all inside the handler of another failure.
+    return JSON.stringify({ time: now.toISOString(), level, event, logError: "could not serialise the fields" });
+  }
 }
 
 export function log(level: Level, event: string, fields?: Fields): void {

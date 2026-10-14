@@ -164,3 +164,13 @@ describe("computeAlerts", () => {
     expect(alerts.map((a) => a.customerId)).toEqual(["a", "z", "b"]);
   });
 });
+
+describe("utilizationPct rounding", () => {
+  test("is exact for amounts where floating point would be off by one", () => {
+    // 29 / 100 * 100 = 28.999999999999996 and 57 / 100 * 100 = 56.99999999999999 in floating point.
+    expect(utilizationPct(29, 100)).toBe(29);
+    expect(utilizationPct(57, 100)).toBe(57);
+    expect(utilizationPct(58, 100)).toBe(58);
+    expect(utilizationPct(79_99, 100_00)).toBe(79); // still rounds DOWN: 79.99% is not yet 80%
+  });
+});

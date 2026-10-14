@@ -65,11 +65,16 @@ export function useDialog(onClose: () => void): RefObject<HTMLDivElement | null>
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    // aria-modal alone is not honoured by every screen reader, so the page behind is also made inert: nothing in it can be
+    // reached by keyboard, pointer or assistive technology while a dialog is open.
+    const background = document.querySelector<HTMLElement>(".app");
+    background?.setAttribute("inert", "");
     document.addEventListener("keydown", onKeyDown);
     return () => {
       document.removeEventListener("keydown", onKeyDown);
       openDialogs.splice(openDialogs.indexOf(node), 1);
       document.body.style.overflow = previousOverflow;
+      if (openDialogs.length === 0) background?.removeAttribute("inert");
       opener?.focus();
     };
   }, []);

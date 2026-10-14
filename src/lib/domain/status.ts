@@ -1,4 +1,5 @@
 import { STATUS_LABELS, type CustomerStatus } from "./constants";
+import { can, type Role } from "./roles";
 
 export type DecisionAction = "start_review" | "approve" | "deny" | "suspend" | "reopen";
 
@@ -42,4 +43,29 @@ export function applyDecision(from: CustomerStatus, action: DecisionAction): Dec
   if (ACTION_FROM[action].includes(from) && canTransition(from, to)) return { ok: true, to };
   const label = action.replace("_", " ");
   return { ok: false, reason: `Cannot ${label}: the customer's status is ${STATUS_LABELS[from]}.` };
+}
+
+/** Approved and suspended accounts have (or had) a credit line. The one place this is decided. */
+export function hasCreditLine(status: CustomerStatus): boolean {
+  return status === "approved" || status === "suspended";
+}
+
+/**
+ * Money can still be owed after a suspension, a denial or a reopening, so a payment is accepted wherever there is a
+ * ledger, and always on an account with a credit line.
+ */
+export function canTakePayment(status: CustomerStatus, hasEntries: boolean): boolean {
+  return hasCreditLine(status) || hasEntries;
+}
+
+/** The credit panel (balance and the buttons to record money) shows for a credit line, and for ANY account with a balance. */
+export function showsCreditPanel(status: CustomerStatus, balanceCents: number): boolean {
+  return hasCreditLine(status) || balanceCents !== 0;
+}
+
+const DECISION_ORDER: readonly DecisionAction[] = ["start_review", "approve", "deny", "suspend", "reopen"];
+
+/** The decisions this role may make on an account in this status: exactly the ones the workflow would accept. */
+export function availableDecisions(status: CustomerStatus, role: Role): DecisionAction[] {
+  return DECISION_ORDER.filter((action) => ACTION_FROM[action].includes(status) && can(role, `decision.${action}`));
 }

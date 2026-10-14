@@ -3,7 +3,9 @@
 import { memo } from "react";
 import type { SortDirection, SortKey } from "@/lib/domain/customer-list";
 import { formatCents } from "@/lib/domain/money";
-import { formatDate, todayISO } from "@/lib/domain/dates";
+import { dateInZone, formatDate } from "@/lib/domain/dates";
+import { useBusinessTimeZone } from "@/lib/client/queries";
+import { hasCreditLine } from "@/lib/domain/status";
 import type { CustomerSummary } from "@/lib/types";
 import { useUi } from "./ui-context";
 import { StatusBadge, UtilBar } from "./ui";
@@ -25,8 +27,8 @@ interface Props {
 const FULL_COLUMNS: ReadonlyArray<{ key: SortKey; label: string; numeric?: boolean }> = [
   { key: "name", label: "Business" },
   { key: "status", label: "Status" },
-  { key: "limit", label: "Credit limit" },
-  { key: "balance", label: "Balance" },
+  { key: "limit", label: "Credit limit", numeric: true },
+  { key: "balance", label: "Balance", numeric: true },
   { key: "utilization", label: "Utilization" },
   { key: "nextDue", label: "Next payment due" },
 ];
@@ -38,9 +40,19 @@ function ariaSort(sort: SortState | undefined, key: SortKey): "ascending" | "des
   return sort.direction === "asc" ? "ascending" : "descending";
 }
 
+/** An empty cell: a dash for the eye, and the word "none" for a screen reader (which would read a dash as nothing or "dash"). */
+function None() {
+  return (
+    <span style={{ color: "var(--text-faint)" }}>
+      <span aria-hidden="true">—</span>
+      <span className="sr-only">none</span>
+    </span>
+  );
+}
+
 function NextDue({ customer }: { customer: CustomerSummary }) {
-  const tracked = customer.status === "approved" || customer.status === "suspended";
-  if (!tracked || !customer.nextDueDate) return <span style={{ color: "var(--text-faint)" }}>—</span>;
+  const tracked = hasCreditLine(customer.status);
+  if (!tracked || !customer.nextDueDate) return <None />;
   return (
     <>
       <div>{formatDate(customer.nextDueDate)}</div>
@@ -53,30 +65,30 @@ function NextDue({ customer }: { customer: CustomerSummary }) {
   );
 }
 
-const Row = memo(function Row({ customer, variant }: { customer: CustomerSummary; variant: Props["variant"] }) {
+const Row = memo(function Row({ customer, variant, timeZone }: { customer: CustomerSummary; variant: Props["variant"]; timeZone: string }) {
   const { openCustomer } = useUi();
   return (
     <tr onClick={() => openCustomer(customer.id)}>
-      <td>
+      <th scope="row" className="row-head">
         <button type="button" className="row-link">
           {customer.businessName}
         </button>
         {customer.contactName ? <div className="cust-contact">{customer.contactName}</div> : null}
-      </td>
+      </th>
       <td>
         <StatusBadge status={customer.status} />
       </td>
-      <td className="mono">{customer.creditLimitCents ? formatCents(customer.creditLimitCents) : "—"}</td>
-      <td className="mono">{formatCents(customer.balanceCents)}</td>
+      <td className="mono num">{customer.creditLimitCents ? formatCents(customer.creditLimitCents) : <None />}</td>
+      <td className="mono num">{formatCents(customer.balanceCents)}</td>
       {variant === "recent" ? (
-        <td style={{ color: "var(--text-dim)", fontSize: 12 }}>{formatDate(todayISO(new Date(customer.updatedAt)))}</td>
+        <td style={{ color: "var(--text-dim)", fontSize: 12 }}>{formatDate(dateInZone(new Date(customer.updatedAt), timeZone))}</td>
       ) : (
         <>
           <td>
             {customer.status === "approved" && customer.creditLimitCents ? (
               <UtilBar pct={customer.utilizationPct} level={customer.utilizationLevel} />
             ) : (
-              <span style={{ color: "var(--text-faint)" }}>—</span>
+              <None />
             )}
           </td>
           <td>
@@ -104,17 +116,59 @@ function SkeletonRows({ columns }: { columns: number }) {
   );
 }
 
+/** On a phone the table is replaced by a card per customer: the columns that matter, with no sideways scrolling. */
+function CustomerCards({ customers, caption }: { customers: readonly CustomerSummary[]; caption: string }) {
+  const { openCustomer } = useUi();
+  return (
+    <ul className="cust-cards" aria-label={caption}>
+      {customers.map((customer) => (
+        <li key={customer.id}>
+          <button type="button" className="cust-card" onClick={() => openCustomer(customer.id)}>
+            <span className="cust-card-top">
+              <b>{customer.businessName}</b>
+              <StatusBadge status={customer.status} />
+            </span>
+            <span className="cust-card-grid">
+              <span>
+                <span className="kv-label">Balance</span>
+                <span className="mono">{formatCents(customer.balanceCents)}</span>
+              </span>
+              <span>
+                <span className="kv-label">Credit limit</span>
+                <span className="mono">{customer.creditLimitCents ? formatCents(customer.creditLimitCents) : "none"}</span>
+              </span>
+              <span>
+                <span className="kv-label">Next payment due</span>
+                <span>{hasCreditLine(customer.status) && customer.nextDueDate ? formatDate(customer.nextDueDate) : "none"}</span>
+              </span>
+              {customer.overdueCents > 0 ? (
+                <span style={{ color: "var(--red)", fontWeight: 600 }}>
+                  <span className="kv-label" style={{ color: "var(--red)" }}>Past due</span>
+                  {formatCents(customer.overdueCents)}
+                </span>
+              ) : null}
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function CustomerTable({ customers, variant, loading, sort, onSort, caption }: Props) {
+  const timeZone = useBusinessTimeZone();
   const columns = variant === "full" ? FULL_COLUMNS.length : RECENT_COLUMNS.length;
   return (
-    <div className="table-wrap">
+    <>
+    {variant === "full" && !loading ? <div className="cards-only"><CustomerCards customers={customers} caption={caption} /></div> : null}
+    <div className={`table-wrap${variant === "full" ? " table-only" : ""}`}>
       <table aria-busy={loading ? true : undefined}>
         <caption className="sr-only">{caption}</caption>
         <thead>
           <tr>
             {variant === "full"
               ? FULL_COLUMNS.map((column) => (
-                  <th key={column.key} scope="col" aria-sort={ariaSort(sort, column.key)}>
+                  <th key={column.key} scope="col" className={column.numeric ? "num" : undefined} aria-sort={ariaSort(sort, column.key)}>
                     <button type="button" className="th-sort" onClick={() => onSort?.(column.key)}>
                       {column.label}
                       <span className="arrow" aria-hidden="true">
@@ -131,7 +185,7 @@ export function CustomerTable({ customers, variant, loading, sort, onSort, capti
           </tr>
         </thead>
         <tbody>
-          {loading ? <SkeletonRows columns={columns} /> : customers.map((customer) => <Row key={customer.id} customer={customer} variant={variant} />)}
+          {loading ? <SkeletonRows columns={columns} /> : customers.map((customer) => <Row key={customer.id} customer={customer} variant={variant} timeZone={timeZone} />)}
           {!loading && customers.length === 0 ? (
             <tr style={{ cursor: "default" }}>
               <td colSpan={columns} style={{ color: "var(--text-faint)", textAlign: "center", padding: 26 }}>
@@ -142,5 +196,6 @@ export function CustomerTable({ customers, variant, loading, sort, onSort, capti
         </tbody>
       </table>
     </div>
+    </>
   );
 }

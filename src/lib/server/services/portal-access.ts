@@ -21,7 +21,8 @@ export interface IssuedInvite {
 
 const MIN_NAME_LENGTH_FOR_PASSWORD_CHECK = 4;
 
-const invalidInvite = () => new ApiError(400, "invalid_invite", "This link is not valid or has expired. Ask us to send you a new one.");
+const invalidInvite = () =>
+  new ApiError(400, "invalid_invite", "This link is not valid or has expired. If you have already set your password, just sign in. Otherwise ask us to send you a new link.");
 const notFound = () => new ApiError(404, "not_found", "That contact no longer exists.");
 
 function assertAdmin(actor: SessionUser): void {
@@ -118,7 +119,10 @@ export async function inviteContact(
       return { contact: await readContact(tx, created.id, now), token, expiresAt: expiresAt.toISOString() };
     });
   } catch (error) {
-    if (isUniqueViolation(error)) throw new ApiError(409, "already_exists", "That email address already has portal access.");
+    if (isUniqueViolation(error)) {
+      // This is also what a double click, or a retry after a lost reply, looks like: the first one worked and its link is gone.
+      throw new ApiError(409, "already_exists", "That email address already has portal access. If you just created it and lost the link, use \"New link\" on that person.");
+    }
     throw error;
   }
 }
@@ -218,6 +222,7 @@ export async function acceptInvite(token: string, password: string, now: Date = 
       summary: `${contact.name} (${contact.email}) set a password and can now sign in`,
       actor: contact.name,
       actorId: invite.customerUserId,
+      actorKind: "customer",
     });
   });
 }

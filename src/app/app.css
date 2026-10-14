@@ -17,7 +17,7 @@
 .field input, .field select, .field textarea, .inline-form input, .inline-form select { outline: none; }
 .field input:focus-visible, .field select:focus-visible, .field textarea:focus-visible,
 .inline-form input:focus-visible, .inline-form select:focus-visible {
-  border-color: var(--focus-ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 30%, transparent);
+  border-color: var(--focus-ring); outline: 2px solid var(--focus-ring); outline-offset: 1px;
 }
 .search-box:focus-within { border-color: var(--focus-ring); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus-ring) 30%, transparent); }
 .search-box input:focus-visible { outline: none; }
@@ -77,11 +77,15 @@ th.num, td.num { text-align: right; }
 .ledger-sub { color: var(--text-dim); grid-column: 1; }
 .ledger-amount { font-family: var(--font-mono); font-weight: 600; text-align: right; grid-row: 1; grid-column: 2; }
 .ledger-amount.pay { color: var(--green); }
-.ledger-item.voided .ledger-main, .ledger-item.voided .ledger-amount { text-decoration: line-through; opacity: 0.6; }
-.ledger-item.reversed .ledger-main, .ledger-item.reversed .ledger-amount { opacity: 0.6; }
+/* A voided or reversed entry is set apart by colour and a line through it, NOT by fading it: faded text (and a faded red
+   tag) fell below the minimum contrast. The tag is a sibling of the label, so it keeps its full colour. */
+.ledger-item.voided .ledger-label, .ledger-item.voided .ledger-amount { text-decoration: line-through; color: var(--text-dim); }
+.ledger-item.reversed .ledger-label, .ledger-item.reversed .ledger-amount { color: var(--text-dim); }
+.ledger-list, .history-list, .alert-items, .cust-cards { list-style: none; margin: 0; padding: 0; }
+.alert-items { display: flex; flex-direction: column; gap: 8px; }
 .ledger-actions { grid-column: 2; text-align: right; }
-.void-tag { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--red); margin-left: 6px; }
-.link-danger { background: none; border: none; color: var(--red); font-size: 12px; font-weight: 600; padding: 2px 0; }
+.void-tag { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--red); margin-left: 6px; }
+.link-danger { background: none; border: none; color: var(--red); font-size: 12.5px; font-weight: 600; padding: 6px 0; min-height: 28px; }
 .link-danger:hover { text-decoration: underline; }
 .inline-form .field-error, .field .field-error { color: var(--red); font-size: 12px; }
 .inline-form label { font-size: 12px; font-weight: 600; color: var(--text-dim); }
@@ -169,3 +173,52 @@ a.btn { text-decoration: none; }
 .portal-contact:last-child { border-bottom: none; }
 .portal-link-box { background: var(--amber-bg); border: 1px solid var(--amber-line); border-radius: var(--radius-sm); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
 .portal-link-box input { width: 100%; font-family: var(--font-mono); font-size: 12px; }
+
+/* ---------- Session ended banner ---------- */
+.session-banner {
+  position: sticky; top: 0; z-index: 250; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  background: var(--amber-bg); border-bottom: 1px solid var(--amber-line); color: var(--amber); padding: 10px 20px; font-size: 13.5px;
+}
+
+/* ---------- Confirmations ---------- */
+.ok-note { background: var(--green-bg); border: 1px solid var(--green-line); color: var(--green); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 12.5px; font-weight: 500; }
+
+/* ---------- Adjustment direction ---------- */
+.direction { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.direction legend { font-size: 12px; font-weight: 600; color: var(--text-dim); padding: 0 4px; }
+.direction label { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--text); }
+
+/* ---------- Aging bar: segments are separated and patterned, so they differ by more than colour ---------- */
+.aging-bar { gap: 2px; }
+.aging-seg.d31_60 { background-image: repeating-linear-gradient(135deg, rgba(255,255,255,0.45) 0 3px, transparent 3px 6px); }
+.aging-seg.d90_plus { background-image: repeating-linear-gradient(45deg, rgba(255,255,255,0.45) 0 3px, transparent 3px 6px); }
+.alerts-list { min-height: 56px; }
+
+/* ---------- Phones: the customer list becomes cards ---------- */
+.cards-only { display: none; }
+@media (max-width: 640px) {
+  .cards-only { display: block; }
+  .table-only { display: none; }
+  .cust-card { width: 100%; text-align: left; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 10px; font: inherit; cursor: pointer; }
+  .cust-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .cust-card-top b { min-width: 0; overflow-wrap: anywhere; text-align: left; }
+  .cust-card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; font-size: 13px; }
+  .cust-card-grid .kv-label { display: block; }
+  .link-danger { min-height: 44px; padding: 10px 0; }
+  .btn-sm { min-height: 40px; }
+  .toast-stack { right: 16px; left: 16px; align-items: stretch; }
+  .toast-wrap { align-items: stretch; }
+}
+
+/* ---------- Printing a customer's page ---------- */
+@media print {
+  .portal-header .pill, .portal-tools, .skip-link, .no-print, .toast-stack { display: none !important; }
+  .portal-header { background: none; color: #000; padding: 0 0 8px 0; border-bottom: 2px solid #000; }
+  .portal-brand .brand-name, .portal-brand .brand-sub { color: #000; }
+  body { background: #fff; color: #000; }
+  .portal-card { border: 1px solid #999; break-inside: avoid; }
+  .ledger-item { break-inside: avoid; }
+  .util-bar-wrap { border: 1px solid #000; }
+}
+
+.portal-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }

@@ -1,5 +1,6 @@
 import "server-only";
 import { cache } from "react";
+import { ApiError } from "../http";
 import { prisma } from "../db";
 import { log } from "../log";
 import { clearSessionCookie, readSessionPayload, setSessionCookie } from "./session-cookies";
@@ -38,17 +39,16 @@ async function readCurrentCustomerUser(): Promise<PortalUser | null> {
 /** One lookup per request, however many layouts and pages ask (they all render within the same request). */
 export const getCurrentCustomerUser = cache(readCurrentCustomerUser);
 
-/** Signs a customer out everywhere: forgets the cookie here first, then makes any copy of the token useless. */
-export async function endCustomerSession(): Promise<{ revoked: boolean }> {
+/** Signs a customer out everywhere. Like the staff sign-out, it removes the cookie only after the session was revoked. */
+export async function endCustomerSession(): Promise<void> {
   const payload = await readSessionPayload("customer");
-  await clearSessionCookie("customer");
-  if (!payload) return { revoked: true };
-
-  try {
-    await prisma.customerUser.updateMany({ where: { id: payload.u, sessionVersion: payload.v }, data: { sessionVersion: { increment: 1 } } });
-    return { revoked: true };
-  } catch (error) {
-    log("error", "auth.customer_logout_revoke_failed", { userId: payload.u, error });
-    return { revoked: false };
+  if (payload) {
+    try {
+      await prisma.customerUser.updateMany({ where: { id: payload.u, sessionVersion: payload.v }, data: { sessionVersion: { increment: 1 } } });
+    } catch (error) {
+      log("error", "auth.customer_logout_revoke_failed", { userId: payload.u, error });
+      throw new ApiError(503, "signout_failed", "Couldn't sign you out. Please try again.");
+    }
   }
+  await clearSessionCookie("customer");
 }

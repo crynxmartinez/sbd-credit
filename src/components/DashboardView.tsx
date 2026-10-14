@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useCustomers } from "@/lib/client/queries";
 import { AGING_BUCKETS, AGING_LABELS } from "@/lib/domain/constants";
 import { buildDashboard } from "@/lib/domain/dashboard";
@@ -11,6 +11,9 @@ import { CustomerTable } from "./CustomerTable";
 import { DataStatus } from "./DataStatus";
 import { PlusIcon, WarningIcon } from "./icons";
 import { useUi } from "./ui-context";
+
+/** More alerts than this are folded behind "Show all", so a long list does not push everything else off the screen. */
+const ALERTS_SHOWN = 10;
 
 function StatCards({ stats }: { stats: DashboardDto["stats"] | undefined }) {
   const cards = [
@@ -46,7 +49,11 @@ function AgingStrip({ aging }: { aging: DashboardDto["aging"] }) {
         <div className="alert-empty" style={{ padding: "10px 0 0 0" }}>No outstanding balances.</div>
       ) : (
         <>
-          <div className="aging-bar" role="img" aria-label={`Outstanding ${formatCents(total)} split by how late it is`}>
+          <div
+            className="aging-bar"
+            role="img"
+            aria-label={`Outstanding ${formatCents(total)}: ${AGING_BUCKETS.map((bucket) => `${AGING_LABELS[bucket]} ${formatCents(aging[bucket])}`).join(", ")}`}
+          >
             {AGING_BUCKETS.filter((bucket) => aging[bucket] > 0).map((bucket) => (
               <div key={bucket} className={`aging-seg ${bucket}`} style={{ width: `${(aging[bucket] / total) * 100}%` }} />
             ))}
@@ -77,6 +84,9 @@ export function DashboardView() {
   // share one request and one cache, and always agree.
   const dashboard = useMemo(() => (data ? buildDashboard(data.customers, data.asOf) : null), [data]);
   const failed = query.isError && !data;
+  const [showAllAlerts, setShowAllAlerts] = useState(false);
+  const alerts = dashboard?.alerts ?? [];
+  const shownAlerts = showAllAlerts ? alerts : alerts.slice(0, ALERTS_SHOWN);
 
   return (
     <div>
@@ -105,21 +115,27 @@ export function DashboardView() {
           </h2>
           <div className="alerts-list">
             {isLoading ? <div className="skeleton" style={{ height: 44 }} /> : null}
-            {dashboard && dashboard.alerts.length === 0 ? <div className="alert-empty">Nothing needs attention right now.</div> : null}
-            {dashboard?.alerts.map((alert) => (
-              <button
-                key={`${alert.customerId}-${alert.kind}`}
-                type="button"
-                className={`alert-row sev-${alert.severity}`}
-                onClick={() => openCustomer(alert.customerId)}
-              >
-                <span className="alert-dot" aria-hidden="true" />
-                <span className="alert-text">
-                  <span className="sr-only">{alert.severity === "high" ? "Urgent: " : "Attention: "}</span>
-                  <b>{alert.businessName}</b> {alert.detail}
-                </span>
+            {dashboard && alerts.length === 0 ? <div className="alert-empty">Nothing needs attention right now.</div> : null}
+            {shownAlerts.length > 0 ? (
+              <ul className="alert-items" aria-label="Accounts that need attention">
+                {shownAlerts.map((alert) => (
+                  <li key={`${alert.customerId}-${alert.kind}`}>
+                    <button type="button" className={`alert-row sev-${alert.severity}`} onClick={() => openCustomer(alert.customerId)}>
+                      <span className="alert-dot" aria-hidden="true" />
+                      <span className="alert-text">
+                        <span className="sr-only">{alert.severity === "high" ? "Urgent: " : "Attention: "}</span>
+                        <b>{alert.businessName}</b> {alert.detail}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            {alerts.length > ALERTS_SHOWN ? (
+              <button type="button" className="btn btn-sm" onClick={() => setShowAllAlerts((current) => !current)} aria-expanded={showAllAlerts}>
+                {showAllAlerts ? "Show fewer" : `Show all ${alerts.length}`}
               </button>
-            ))}
+            ) : null}
           </div>
 
           {dashboard ? <AgingStrip aging={dashboard.aging} /> : null}

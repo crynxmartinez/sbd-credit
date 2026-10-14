@@ -22,7 +22,8 @@
     "backup": "node scripts/with-dev-db.mjs tsx scripts/backup.ts",
     "restore": "node scripts/with-dev-db.mjs tsx scripts/restore.ts",
     "user": "node scripts/with-dev-db.mjs tsx scripts/users.ts",
-    "e2e": "node scripts/e2e.mjs"
+    "e2e": "node scripts/e2e.mjs",
+    "restore-drill": "node scripts/restore-drill.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
@@ -48,6 +49,7 @@
     "dotenv": "^17.4.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.8",
+    "fast-check": "^4.10.2",
     "prisma": "^7.10.0",
     "tsx": "^4.23.12",
     "typescript": "^5",
@@ -58,5 +60,8 @@
     "esbuild@0.28.2": true,
     "prisma@7.10.0": true,
     "unrs-resolver@1.12.2": true
+  },
+  "engines": {
+    "node": ">=22"
   }
 }

@@ -1,5 +1,6 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiClientError } from "@/lib/client/api";
 import { useBusinessToday, useCreateCustomer, useCustomers, useUpdateCustomer } from "@/lib/client/queries";
@@ -89,20 +90,30 @@ interface Props {
 export function CustomerFormModal({ customer, onClose, onCreated }: Props) {
   const { user } = useUi();
   const notify = useToast();
-  const dialogRef = useDialog(onClose);
+  const queryClient = useQueryClient();
   const create = useCreateCustomer();
   const update = useUpdateCustomer(customer?.id ?? "");
   const today = useBusinessToday();
   const [form, setForm] = useState<FormState>(() => initialState(customer, today));
+  // What the form held when it opened, to tell whether anything has been typed since.
+  const [baseline] = useState(() => JSON.stringify(initialState(customer, today)));
+  const dirty = JSON.stringify(form) !== baseline;
+  function requestClose() {
+    if (dirty && !window.confirm("Discard what you have entered in this form?")) return;
+    onClose();
+  }
+  const dialogRef = useDialog(requestClose);
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   // One key per form: if a save is retried (a lost reply, a double click) the server recognises it and adds nothing twice.
   const [requestKey] = useState(() => crypto.randomUUID());
   const [stale, setStale] = useState(false);
+  // Set only when the person chose "load theirs": the form then holds the newest copy, so it must be saved against it.
+  const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
 
   // The newest copy of this customer. The snapshot the form opened with ages while it is open; a save must be made
   // against the current version, or one "someone else changed this" error would repeat on every attempt.
-  const { data: list } = useCustomers();
+  const { data: list } = useCustomers({ poll: false });
   const live = customer ? list?.customers.find((candidate) => candidate.id === customer.id) : undefined;
 
   const editing = customer !== null;
@@ -124,7 +135,10 @@ export function CustomerFormModal({ customer, onClose, onCreated }: Props) {
   }
 
   function loadTheirs() {
-    if (live) setForm(initialState(live, today));
+    if (live) {
+      setForm(initialState(live, today));
+      setLoadedVersion(live.version);
+    }
     setErrors({});
     setStale(false);
   }
@@ -166,7 +180,10 @@ export function CustomerFormModal({ customer, onClose, onCreated }: Props) {
       if (customer) {
         const parsed = customerUpdateSchema.safeParse({
           ...profile,
-          version: live?.version ?? customer.version,
+          // The version the form was OPENED at. If someone else saved since, the server says so and the person chooses. Only
+          // AFTER that conflict is shown does a second save go against the newest copy ("keep mine"): using the newest copy
+          // straight away would silently overwrite a colleague's change.
+          version: stale ? (live?.version ?? customer.version) : (loadedVersion ?? customer.version),
           ...(showCredit
             ? { creditLimitCents: credit ?? undefined, paymentTerms: form.paymentTerms, creditStartDate: form.creditStartDate || null }
             : {}),
@@ -184,6 +201,9 @@ export function CustomerFormModal({ customer, onClose, onCreated }: Props) {
       }
     } catch (caught) {
       if (caught instanceof ApiClientError && caught.code === "stale") {
+        // The cached copy is the one this form was opened from: bring in the newest, or "keep mine" would be sent against the
+        // same old version and fail the same way again.
+        await queryClient.refetchQueries({ queryKey: ["customers"] }).catch(() => undefined);
         setStale(true);
       } else if (caught instanceof ApiClientError) {
         const { errors: inline } = mapFields(caught.fields);
@@ -201,7 +221,7 @@ export function CustomerFormModal({ customer, onClose, onCreated }: Props) {
         <form onSubmit={submit} noValidate>
           <div className="modal-header">
             <h2 id="customer-form-title">{editing ? "Edit credit application" : "New credit application"}</h2>
-            <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
+            <button type="button" className="icon-btn" onClick={requestClose} aria-label="Close">
               <CloseIcon />
             </button>
           </div>
@@ -280,7 +300,7 @@ export function CustomerFormModal({ customer, onClose, onCreated }: Props) {
             </div>
           </div>
           <div className="modal-footer">
-            <button type="button" className="btn" onClick={onClose}>
+            <button type="button" className="btn" onClick={requestClose}>
               Cancel
             </button>
             <button type="submit" className="btn btn-primary" disabled={pending}>

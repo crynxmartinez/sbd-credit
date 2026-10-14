@@ -40,7 +40,8 @@ export interface Alert {
 /** Rounded DOWN, so 99.6% never reads as 100% and a customer is never flagged for a threshold they have not reached. */
 export function utilizationPct(balanceCents: number, limitCents: number): number {
   if (limitCents <= 0) return 0;
-  const pct = Math.floor((balanceCents / limitCents) * 100);
+  // Whole-number arithmetic: (29 / 100) * 100 is 28.999... in floating point and would round down to 28.
+  const pct = Math.floor((balanceCents * 100) / limitCents);
   return Math.max(0, Math.min(UTILIZATION_DISPLAY_CAP_PCT, pct));
 }
 

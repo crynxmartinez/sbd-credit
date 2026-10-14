@@ -21,9 +21,9 @@ export function CreditPanel({ customer, active, setActive }: Props) {
 
   return (
     <div>
-      <div className="kv-label" style={{ marginBottom: 8 }}>
+      <h3 className="kv-label" style={{ marginBottom: 8 }}>
         Credit account
-      </div>
+      </h3>
       <div className="balance-box">
         <div>
           <div className="kv-label">Outstanding balance</div>
@@ -88,6 +88,7 @@ export function CreditPanel({ customer, active, setActive }: Props) {
           kind={entryKind}
           paymentTerms={customer.paymentTerms}
           owedCents={customer.balanceCents}
+          approved={approved}
           onDone={() => setActive(null)}
         />
       ) : null}

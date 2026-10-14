@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { ADMIN, EMPLOYEE, alertWith, balanceText, drawer, newSession, openCustomer, requireCredentials, signIn, statusWith } from "./helpers";
 
-const ORIGIN = "http://127.0.0.1:3201";
+const ORIGIN = process.env.E2E_ORIGIN ?? "http://127.0.0.1:3201";
 const NAME = "E2E Corrections Co";
 
 test.beforeAll(requireCredentials);
@@ -113,16 +113,20 @@ test("a write-off cannot exceed what is owed, needs a reason, and is reported se
 
   await form("Write off").getByLabel("Amount ($)").fill("250");
   await form("Write off").getByLabel("Reason (required)").fill("Customer closed");
-  await form("Write off").getByRole("button", { name: "Write off" }).click();
+  await form("Write off").getByRole("button", { name: "Review write-off" }).click();
   await expect(alertWith(form("Write off"), "at most $100.00")).toBeVisible();
 
   await form("Write off").getByLabel("Amount ($)").fill("60");
   await form("Write off").getByLabel("Reason (required)").fill("");
-  await form("Write off").getByRole("button", { name: "Write off" }).click();
+  await form("Write off").getByRole("button", { name: "Review write-off" }).click();
   await expect(alertWith(form("Write off"), "Say why")).toBeVisible();
 
+  // A valid write-off is not sent by the first press: it shows what will happen, and waits for a second.
   await form("Write off").getByLabel("Reason (required)").fill("Customer closed, uncollectible");
-  await form("Write off").getByRole("button", { name: "Write off" }).click();
+  await form("Write off").getByRole("button", { name: "Review write-off" }).click();
+  await expect(form("Write off").getByText(/balance becomes/)).toContainText("$40.00");
+  await expect(balanceText(page)).resolves.toBe("$100.00"); // nothing has changed yet
+  await form("Write off").getByRole("button", { name: "Confirm write-off" }).click();
   await expect(statusWith(page, "Written off")).toBeVisible();
 
   await expect.poll(() => balanceText(page)).toBe("$40.00");

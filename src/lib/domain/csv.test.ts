@@ -37,3 +37,15 @@ describe("centsToDecimal", () => {
     [-1250, "-12.50"],
   ])("%i -> %s", (cents, text) => expect(centsToDecimal(cents)).toBe(text));
 });
+
+describe("phone numbers", () => {
+  test("a phone number that starts with + is data, not a formula, so it is left exactly as typed", () => {
+    expect(toCsv([["+1 (555) 201-4410"]])).toBe("+1 (555) 201-4410\r\n");
+    expect(toCsv([["+44 20 7946 0958"]])).toBe("+44 20 7946 0958\r\n");
+  });
+
+  test("but anything with a + that could be a formula is still defused", () => {
+    expect(toCsv([["+1+2"]])).toBe("'+1+2\r\n");
+    expect(toCsv([["+HYPERLINK(\"x\")"]]).startsWith("\"'+HYPERLINK")).toBe(true);
+  });
+});

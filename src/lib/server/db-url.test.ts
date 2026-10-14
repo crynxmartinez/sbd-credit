@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { assertSafeTarget, isPooledHost, poolConfigFor, schemaFromUrl, withExplicitSsl } from "./db-url";
+import { assertSafeTarget, assertSecureTransport, isPooledHost, poolConfigFor, schemaFromUrl, withExplicitSsl } from "./db-url";
 
 const base = "postgres://u:p@db.example.com:5432/postgres?sslmode=require";
 
@@ -62,8 +62,8 @@ describe("withExplicitSsl", () => {
 
 describe("poolConfigFor", () => {
   test("pins the connection's search path to the app's schema, so raw SQL cannot reach another app's tables", () => {
-    expect(poolConfigFor(`${base}&schema=credit_dev`, "development").options).toBe("-c search_path=credit_dev");
-    expect(poolConfigFor(`${base}&schema=credit`, "production").options).toBe("-c search_path=credit");
+    expect(poolConfigFor(`${base}&schema=credit_dev`, "development").options).toMatch(/^-c search_path=credit_dev( |$)/);
+    expect(poolConfigFor(`${base}&schema=credit`, "production").options).toMatch(/^-c search_path=credit( |$)/);
   });
 
   test("still refuses an unsafe target, so the search path can never name a live schema", () => {
@@ -76,5 +76,29 @@ describe("poolConfigFor", () => {
     expect(new URL(config.connectionString).searchParams.get("sslmode")).toBe("verify-full");
     expect(config.max).toBe(10);
     expect(config.keepAlive).toBe(true);
+  });
+});
+
+describe("connection robustness", () => {
+  const config = () => poolConfigFor("postgres://u:p@db.example.com:5432/postgres?sslmode=require&schema=credit_dev", "development");
+
+  test("a half-dead idle connection is noticed within seconds, not after the operating system's two-hour default", () => {
+    expect(config()).toMatchObject({ keepAlive: true, keepAliveInitialDelayMillis: 10_000 });
+  });
+
+  test("a connection left in the middle of a transaction (a crashed process) is cut off, so it cannot hold a customer's lock", () => {
+    expect(config().options).toContain("idle_in_transaction_session_timeout=30s");
+    expect(config().options).toContain("search_path=credit_dev"); // and the schema pin is still there
+  });
+});
+
+describe("assertSecureTransport", () => {
+  test("production requires an encrypted connection, anything else may be plain", () => {
+    expect(() => assertSecureTransport("postgres://u:p@h/db?schema=credit", "production")).toThrow(/sslmode/);
+    expect(() => assertSecureTransport("postgres://u:p@h/db?schema=credit&sslmode=disable", "production")).toThrow(/sslmode/);
+    expect(() => assertSecureTransport("postgres://u:p@h/db?schema=credit&sslmode=prefer", "production")).toThrow(/sslmode/);
+    expect(() => assertSecureTransport("postgres://u:p@h/db?schema=credit&sslmode=require", "production")).not.toThrow();
+    expect(() => assertSecureTransport("postgres://u:p@h/db?schema=credit&sslmode=verify-full", "production")).not.toThrow();
+    expect(() => assertSecureTransport("postgres://u:p@h/db?schema=credit_dev", "development")).not.toThrow();
   });
 });

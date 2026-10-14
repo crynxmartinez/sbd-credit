@@ -4,7 +4,7 @@ import { defineConfig } from "@playwright/test";
  * End-to-end tests. Run them with `npm run e2e`, which builds a throwaway schema, starts the app against it and passes
  * in freshly generated sign-in details. They use the Microsoft Edge that Windows already has, so nothing is downloaded.
  */
-const PORT = 3201;
+const ORIGIN = process.env.E2E_ORIGIN ?? "http://127.0.0.1:3201";
 
 export default defineConfig({
   testDir: "e2e",
@@ -16,8 +16,9 @@ export default defineConfig({
   expect: { timeout: 15_000 },
   reporter: [["list"]],
   use: {
-    baseURL: `http://127.0.0.1:${PORT}`,
-    channel: "msedge",
+    baseURL: ORIGIN,
+    // Windows has Edge already, so nothing is downloaded there. Elsewhere (CI) the Chromium that Playwright installs is used.
+    channel: process.env.PW_CHANNEL ?? (process.platform === "win32" ? "msedge" : undefined),
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },

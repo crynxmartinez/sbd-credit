@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   addDays,
   dbDateToIso,
+  dateInZone,
   diffDays,
   isInClosedMonth,
   dueDateFor,
@@ -115,5 +116,20 @@ describe("isInClosedMonth", () => {
   test("works across a year boundary", () => {
     expect(isInClosedMonth("2025-12-31", "2026-01-01")).toBe(true);
     expect(isInClosedMonth("2026-01-01", "2026-01-31")).toBe(false);
+  });
+});
+
+describe("dateInZone", () => {
+  const MOMENT = new Date("2026-10-13T03:00:00Z"); // 10pm on the 12th in Chicago, already the 13th in UTC
+
+  test("is the calendar day in the given zone, not the viewer's and not UTC's", () => {
+    expect(dateInZone(MOMENT, "America/Chicago")).toBe("2026-10-12");
+    expect(dateInZone(MOMENT, "Asia/Manila")).toBe("2026-10-13");
+    expect(dateInZone(MOMENT, "UTC")).toBe("2026-10-13");
+  });
+
+  test("an audit timestamp is shown on the day the books say it happened", () => {
+    // 11:30pm Chicago on the 1st is already the 2nd in UTC: a viewer in UTC must still see the 1st.
+    expect(dateInZone(new Date("2026-11-02T05:30:00Z"), "America/Chicago")).toBe("2026-11-01");
   });
 });

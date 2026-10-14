@@ -88,13 +88,13 @@ test.describe("the security policy does not break the app", () => {
   test("an injected script cannot run: customer-supplied text is shown as text", async ({ page }) => {
     await signIn(page, ADMIN);
     const created = await page.request.post("/api/customers", {
-      headers: { Origin: "http://127.0.0.1:3201" },
+      headers: { Origin: process.env.E2E_ORIGIN ?? "http://127.0.0.1:3201" },
       data: { businessName: '<img src=x onerror="window.__pwned=1"><script>window.__pwned=2</script>', dateApplied: "2026-10-14", notes: "<b>bold?</b>" },
     });
     expect(created.status()).toBe(201);
 
     await page.goto("/customers");
-    await expect(page.getByText('<img src=x onerror="window.__pwned=1">', { exact: false }).first()).toBeVisible();
+    await expect(page.getByRole("table").getByText('<img src=x onerror="window.__pwned=1">', { exact: false }).first()).toBeVisible();
     expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
   });
 });

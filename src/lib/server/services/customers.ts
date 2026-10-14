@@ -1,9 +1,10 @@
 import "server-only";
 import { diffFields, summarizeChanges } from "@/lib/domain/diff";
+import { sameCustomerSubmission } from "@/lib/domain/idempotency";
 import { can, type Action } from "@/lib/domain/roles";
 import { computeAging } from "@/lib/domain/ledger";
 import { toSummary } from "@/lib/domain/summary";
-import { applyDecision } from "@/lib/domain/status";
+import { applyDecision, hasCreditLine } from "@/lib/domain/status";
 import { formatCents } from "@/lib/domain/money";
 import { dbDateToIso, isoToDbDate } from "@/lib/domain/dates";
 import type { CustomerStatus } from "@/lib/domain/constants";
@@ -81,8 +82,16 @@ const isUniqueViolation = (error: unknown): boolean =>
 
 /** Creates an application. The same form submission, retried, returns the customer it already created. */
 export async function createCustomer(input: CustomerCreateInput, actor: SessionUser): Promise<string> {
-  const earlierFor = async (key: string | undefined) =>
-    key ? (await prisma.customer.findUnique({ where: { requestKey: key }, select: { id: true } }))?.id : undefined;
+  // A key seen before means a retry, unless the details differ: then it is an edited form, and answering "created" with the
+  // first version would silently drop the edit.
+  const earlierFor = async (key: string | undefined) => {
+    const row = key ? await prisma.customer.findUnique({ where: { requestKey: key } }) : null;
+    if (!row) return undefined;
+    if (!sameCustomerSubmission({ ...row, dateApplied: dbDateToIso(row.dateApplied) }, input)) {
+      throw new ApiError(409, "request_key_reuse", "That application was already created with different details. Reload the list to see it, then change it there.");
+    }
+    return row.id;
+  };
 
   const earlier = await earlierFor(input.requestKey);
   if (earlier) return earlier;
@@ -140,9 +149,13 @@ export async function updateCustomer(id: string, input: CustomerUpdateInput, act
     if (!can(actor.role, "customer.change_credit")) {
       throw new ApiError(403, "forbidden", "Only an admin can change credit terms.");
     }
-    if (current.status !== "approved" && current.status !== "suspended") {
-      throw new ApiError(400, "invalid_state", "Credit terms are set when the application is approved.");
+    if (!hasCreditLine(current.status as CustomerStatus)) {
+      throw new ApiError(409, "invalid_state", "Credit terms are set when the application is approved.");
     }
+  }
+  // A limit of zero would switch off every limit warning and alert while the account stays approved. To stop credit, suspend it.
+  if (current.status === "approved" && input.creditLimitCents !== undefined && input.creditLimitCents <= 0) {
+    throw new ApiError(422, "invalid_limit", "An approved account needs a credit limit above $0. To stop credit, suspend the account instead.");
   }
 
   const next = {

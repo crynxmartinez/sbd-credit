@@ -29,6 +29,12 @@ export function todayISO(now: Date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
+/** The calendar day (YYYY-MM-DD) that a moment falls on in a given time zone. */
+export function dateInZone(moment: Date, timeZone: string): string {
+  // The en-CA locale prints dates as YYYY-MM-DD.
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(moment);
+}
+
 export function isValidISODate(value: string): boolean {
   const match = ISO_DATE_PATTERN.exec(value);
   if (!match) return false;

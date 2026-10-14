@@ -11,13 +11,15 @@ import { toCustomerBase, toLedgerRecord } from "../serialize";
  * Every query below is scoped by `user.customerId`.
  */
 export async function getPortalView(user: PortalUser, asOf: string): Promise<PortalView | null> {
-  const customer = await prisma.customer.findUnique({ where: { id: user.customerId } });
+  // Independent of each other, so one round trip to the database instead of two.
+  const [customer, entries] = await Promise.all([
+    prisma.customer.findUnique({ where: { id: user.customerId } }),
+    prisma.ledgerEntry.findMany({
+      where: { customerId: user.customerId, voidedAt: null },
+      select: { id: true, type: true, amountCents: true, entryDate: true, dueDate: true, reference: true, voidedAt: true, reversesEntryId: true },
+    }),
+  ]);
   if (!customer) return null;
-
-  const entries = await prisma.ledgerEntry.findMany({
-    where: { customerId: user.customerId, voidedAt: null },
-    select: { id: true, type: true, amountCents: true, entryDate: true, dueDate: true, reference: true, voidedAt: true, reversesEntryId: true },
-  });
 
   const rows = entries.map((entry) => ({ entry, record: toLedgerRecord(entry) }));
   const summary = toSummary(toCustomerBase(customer), rows.map((row) => row.record), asOf);

@@ -16,7 +16,7 @@ function Done() {
   const ref = useAutoFocus<HTMLDivElement>();
   return (
     <div ref={ref} style={{ display: "contents" }}>
-      <div className="warn-note">Your password is set. You can sign in now with your email address and that password.</div>
+      <div className="ok-note" role="status">Your password is set. You can sign in now with your email address and that password.</div>
       <Link href="/login" className="btn btn-primary" data-autofocus>
         Go to sign in
       </Link>

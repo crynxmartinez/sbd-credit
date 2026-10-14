@@ -74,12 +74,13 @@ Each phase ships on its own and is useful on its own. Size: S under a day, M a f
 
 The core of what was described.
 
-- **Data:** `CustomerUser` (customer, email, name, password hash, active, session version, lockout fields) and
+- **Data:** `CustomerUser` (customer, email, name, password hash, active, session version, failure count) and
   `PortalInvite` (hashed single-use token, expiry, used-at).
 - **Auth:** invite link sets the customer's own password. **The existing sign-in page serves both:** the server looks the
   identifier up as staff, then as customer, and sends each to their own home (staff `/`, customer `/portal`). The same
   username or email may not exist as both kinds (sign-in refuses an ambiguous match rather than guess). Identical error
-  for wrong password, unknown name and locked account; shared lockout and rate limit; customer sessions are shorter than
+  for wrong password, unknown name and disabled account; rate limits per address and per account-and-address, and NO lock
+  for customers (see the note at the top); customer sessions are shorter than
   staff sessions. Staff and customer sessions use different cookies and signing keys.
 - **Routes:** `/portal` (server-rendered, no data API) and `/api/portal/accept` (public, rate-limited). Staff manage
   contacts under `/api/customers/[id]/portal`.

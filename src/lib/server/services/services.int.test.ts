@@ -15,6 +15,8 @@ const EMPLOYEE: SessionUser = { id: "u-emp", username: "emp", name: "Test Employ
 const TODAY = businessToday();
 /** A day in the previous month, which is closed. */
 const LAST_MONTH = addDays(`${TODAY.slice(0, 8)}01`, -1);
+/** A date ahead of today, within the 90 days an entry may be dated forward. */
+const AHEAD = addDays(TODAY, 30);
 
 const profile = (name: string): CustomerCreateInput => ({
   businessName: name,
@@ -127,22 +129,58 @@ describe("concurrent writes", () => {
 });
 
 describe("ledger writes lock the customer", () => {
-  test("a charge racing a suspension never lands on the suspended account", async () => {
-    const id = await approvedCustomer("Charge Vs Suspend Co");
-    await recordEntry(id, entry("CHARGE", 100_00), EMPLOYEE);
+  /** Holds the customer's row lock in a separate transaction until released, so writers started meanwhile queue behind it IN ORDER. */
+  async function holdCustomerLock(customerId: string) {
+    let release: () => void = () => undefined;
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    let acquired: () => void = () => undefined;
+    const ready = new Promise<void>((resolve) => { acquired = resolve; });
+    const finished = prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "Customer" WHERE "id" = ${customerId} FOR UPDATE`;
+        acquired();
+        await released;
+      },
+      { timeout: 30_000 },
+    );
+    await ready;
+    return { release: async () => { release(); await finished; } };
+  }
+  const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-    const [chargeResult, suspendResult] = await Promise.allSettled([
-      recordEntry(id, entry("CHARGE", 50_00), EMPLOYEE),
-      decide(id, { action: "suspend", version: 2, reason: "Race" }, ADMIN),
-    ]);
+  test("a charge that was waiting for the lock BEFORE a suspension is recorded, then the suspension applies", async () => {
+    const id = await approvedCustomer("Charge Then Suspend Co");
+    const hold = await holdCustomerLock(id);
+    const charge = recordEntry(id, entry("CHARGE", 50_00), EMPLOYEE);
+    await pause(500);
+    const suspend = decide(id, { action: "suspend", version: 2, reason: "Race" }, ADMIN);
+    await pause(500);
+    await hold.release();
+
+    const [chargeResult, suspendResult] = await Promise.allSettled([charge, suspend]);
+    expect(chargeResult.status).toBe("fulfilled");
     expect(suspendResult.status).toBe("fulfilled");
+    const detail = await getDetail(id, TODAY);
+    expect(detail.customer.status).toBe("suspended");
+    expect(detail.ledger.filter((e) => e.type === "CHARGE")).toHaveLength(1);
+  });
 
-    const suspended = (await prisma.auditEvent.findFirst({ where: { customerId: id, action: "decision.suspend" } }))!;
-    const charges = await prisma.ledgerEntry.findMany({ where: { customerId: id, type: "CHARGE" } });
+  test("a suspension that was waiting BEFORE a charge wins: the charge is refused and nothing lands on the suspended account", async () => {
+    const id = await approvedCustomer("Suspend Then Charge Co");
+    const hold = await holdCustomerLock(id);
+    const suspend = decide(id, { action: "suspend", version: 2, reason: "Race" }, ADMIN);
+    await pause(500);
+    const charge = recordEntry(id, entry("CHARGE", 50_00), EMPLOYEE);
+    await pause(500);
+    await hold.release();
 
-    // Whichever won the race, no charge may have been created after the suspension took effect.
-    for (const charge of charges) expect(charge.createdAt.getTime()).toBeLessThanOrEqual(suspended.createdAt.getTime());
-    if (chargeResult.status === "rejected") expect((chargeResult.reason as ApiError).status).toBe(409);
+    const [suspendResult, chargeResult] = await Promise.allSettled([suspend, charge]);
+    expect(suspendResult.status).toBe("fulfilled");
+    expect(chargeResult.status).toBe("rejected");
+    expect((chargeResult as PromiseRejectedResult).reason).toMatchObject({ status: 409, code: "invalid_state" });
+    const detail = await getDetail(id, TODAY);
+    expect(detail.customer.status).toBe("suspended");
+    expect(detail.ledger.filter((e) => e.type === "CHARGE")).toHaveLength(0);
   });
 
   test("two charges that together pass the limit: the second is told, using the first", async () => {
@@ -198,7 +236,7 @@ describe("the database itself refuses to break the ledger", () => {
     await expect(prisma.ledgerEntry.create({ data: { ...base, type: "CHARGE", amountCents: 0 } })).rejects.toThrow();
     await expect(prisma.ledgerEntry.create({ data: { ...base, type: "REFUND", amountCents: 5 } })).rejects.toThrow();
     await expect(prisma.ledgerEntry.create({ data: { ...base, type: "ADJUSTMENT", amountCents: 0 } })).rejects.toThrow();
-    await expect(prisma.ledgerEntry.create({ data: { ...base, type: "CHARGE", amountCents: 5, voidedAt: new Date() } })).rejects.toThrow();
+    await expect(prisma.ledgerEntry.create({ data: { ...base, type: "CHARGE", amountCents: 5, voidedAt: new Date() } })).rejects.toThrow(/LedgerEntry_void_check/);
     await expect(prisma.customer.update({ where: { id }, data: { status: "bogus" } })).rejects.toThrow();
     await expect(prisma.customer.update({ where: { id }, data: { creditLimitCents: -1 } })).rejects.toThrow();
   });
@@ -333,7 +371,7 @@ describe("permissions", () => {
 
   test("credit terms cannot be set before approval", async () => {
     const id = await createCustomer(profile("Early Terms Co"), EMPLOYEE);
-    await expectApiError(updateCustomer(id, { ...profile("Early Terms Co"), version: 1, creditLimitCents: 5_000_00 }, ADMIN), 400);
+    await expectApiError(updateCustomer(id, { ...profile("Early Terms Co"), version: 1, creditLimitCents: 5_000_00 }, ADMIN), 409);
   });
 
   test("only an admin can post an adjustment", async () => {
@@ -383,7 +421,7 @@ describe("workflow rules", () => {
     const reopened = (await getDetail(id, TODAY)).customer;
     expect(reopened.status).toBe("under_review");
     // The clock restarted at the reopening, not at the original application on 2026-10-01.
-    expect(reopened.statusChangedDate).not.toBe("2026-10-01");
+    expect(reopened.statusChangedDate).toBe(TODAY);
 
     await recordEntry(id, entry("PAYMENT", 100_00), EMPLOYEE);
     expect((await getDetail(id, TODAY)).customer.balanceCents).toBe(200_00);
@@ -432,7 +470,7 @@ describe("audit trail and derived figures", () => {
 
   test("an entry dated after the business day is kept and flagged, and not counted until then", async () => {
     const id = await approvedCustomer("Post Dated Co");
-    const result = await recordEntry(id, entry("CHARGE", 80_00, { entryDate: "2099-01-01" }), EMPLOYEE);
+    const result = await recordEntry(id, entry("CHARGE", 80_00, { entryDate: AHEAD }), EMPLOYEE);
     expect(result.postDated).toBe(true);
     expect((await recordEntry(id, entry("CHARGE", 20_00), EMPLOYEE)).postDated).toBe(false);
     expect((await getDetail(id, TODAY)).customer.balanceCents).toBe(20_00);
@@ -440,8 +478,8 @@ describe("audit trail and derived figures", () => {
 
   test("aging is as-of the day asked for: a post-dated payment does not reduce today's overdue", async () => {
     const id = await approvedCustomer("As Of Co");
-    await recordEntry(id, entry("CHARGE", 100_00, { entryDate: "2026-09-01", dueDate: "2026-10-01" }), EMPLOYEE);
-    await recordEntry(id, entry("PAYMENT", 100_00, { entryDate: "2026-10-20" }), EMPLOYEE);
+    await recordEntry(id, entry("CHARGE", 100_00, { entryDate: "2026-09-01", dueDate: "2026-10-01" }), ADMIN);
+    await recordEntry(id, entry("PAYMENT", 100_00, { entryDate: "2026-10-20" }), ADMIN);
 
     expect((await getDetail(id, "2026-10-13")).customer).toMatchObject({ balanceCents: 100_00, overdueCents: 100_00 });
     expect((await getDetail(id, "2026-10-20")).customer).toMatchObject({ balanceCents: 0, overdueCents: 0 });
@@ -509,7 +547,7 @@ describe("write-offs", () => {
 
   test("the limit is what was owed on the write-off's own date, not what is owed today", async () => {
     const id = await approvedCustomer("Write Off As Of Co");
-    await recordEntry(id, entry("CHARGE", 40_00, { entryDate: LAST_MONTH, dueDate: LAST_MONTH }), EMPLOYEE);
+    await recordEntry(id, entry("CHARGE", 40_00, { entryDate: LAST_MONTH, dueDate: LAST_MONTH }), ADMIN);
     await recordEntry(id, entry("CHARGE", 60_00), EMPLOYEE);
     // 100.00 is owed today, but only 40.00 was owed on LAST_MONTH.
     await expectApiError(recordEntry(id, writeOff(41_00, { entryDate: LAST_MONTH }), ADMIN), 409);
@@ -518,8 +556,8 @@ describe("write-offs", () => {
 
   test("it settles the oldest charge first, so what remains keeps its true age", async () => {
     const id = await approvedCustomer("Write Off Aging Co");
-    await recordEntry(id, entry("CHARGE", 100_00, { entryDate: addDays(TODAY, -120), dueDate: addDays(TODAY, -90) }), EMPLOYEE);
-    await recordEntry(id, entry("CHARGE", 50_00, { entryDate: addDays(TODAY, -20), dueDate: addDays(TODAY, -5) }), EMPLOYEE);
+    await recordEntry(id, entry("CHARGE", 100_00, { entryDate: addDays(TODAY, -120), dueDate: addDays(TODAY, -90) }), ADMIN);
+    await recordEntry(id, entry("CHARGE", 50_00, { entryDate: addDays(TODAY, -20), dueDate: addDays(TODAY, -5) }), ADMIN);
     await recordEntry(id, writeOff(100_00), ADMIN);
 
     const { customer } = await getDetail(id, TODAY);
@@ -555,7 +593,7 @@ describe("reversals", () => {
 
   test("an entry from a closed month is reversed by a new entry dated today, and the closed month does not change", async () => {
     const id = await approvedCustomer("Reverse Closed Month Co");
-    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 80_00, { entryDate: LAST_MONTH, dueDate: LAST_MONTH }), EMPLOYEE);
+    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 80_00, { entryDate: LAST_MONTH, dueDate: LAST_MONTH }), ADMIN);
     const before = (await getDetail(id, LAST_MONTH)).customer;
 
     const result = await reverseEntry(id, chargeId, reversal("Billed to the wrong customer"), ADMIN);
@@ -579,8 +617,8 @@ describe("reversals", () => {
 
   test("reversing a payment re-opens the debt it had paid", async () => {
     const id = await approvedCustomer("Reverse Payment Co");
-    await recordEntry(id, entry("CHARGE", 100_00, { entryDate: LAST_MONTH, dueDate: LAST_MONTH }), EMPLOYEE);
-    const { id: paymentId } = await recordEntry(id, entry("PAYMENT", 100_00, { entryDate: LAST_MONTH }), EMPLOYEE);
+    await recordEntry(id, entry("CHARGE", 100_00, { entryDate: LAST_MONTH, dueDate: LAST_MONTH }), ADMIN);
+    const { id: paymentId } = await recordEntry(id, entry("PAYMENT", 100_00, { entryDate: LAST_MONTH }), ADMIN);
     expect((await getDetail(id, TODAY)).customer.balanceCents).toBe(0);
 
     await reverseEntry(id, paymentId, reversal("Check bounced"), ADMIN);
@@ -648,17 +686,17 @@ describe("reversals", () => {
 
   test("a reversal of a future-dated entry is dated no earlier than that entry", async () => {
     const id = await approvedCustomer("Reverse Future Co");
-    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 33_00, { entryDate: "2099-01-01" }), EMPLOYEE);
+    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 33_00, { entryDate: AHEAD }), EMPLOYEE);
     const result = await reverseEntry(id, chargeId, reversal(), ADMIN);
-    expect((await getDetail(id, "2099-01-01")).ledger.find((e) => e.id === result.id)?.entryDate).toBe("2099-01-01");
-    expect((await getDetail(id, "2099-01-01")).customer.balanceCents).toBe(0);
+    expect((await getDetail(id, AHEAD)).ledger.find((e) => e.id === result.id)?.entryDate).toBe(AHEAD);
+    expect((await getDetail(id, AHEAD)).customer.balanceCents).toBe(0);
   });
 });
 
 describe("voiding after reversals and month close", () => {
   test("this month's entries can still be voided; an entry from a closed month cannot, and says to reverse it", async () => {
     const id = await approvedCustomer("Void Window Co");
-    const { id: oldId } = await recordEntry(id, entry("CHARGE", 10_00, { entryDate: LAST_MONTH, dueDate: LAST_MONTH }), EMPLOYEE);
+    const { id: oldId } = await recordEntry(id, entry("CHARGE", 10_00, { entryDate: LAST_MONTH, dueDate: LAST_MONTH }), ADMIN);
     const { id: newId } = await recordEntry(id, entry("CHARGE", 10_00), EMPLOYEE);
 
     await voidEntry(id, newId, "Typo", ADMIN);

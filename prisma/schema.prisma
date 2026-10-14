@@ -161,6 +161,9 @@ model AuditEvent {
   actor         String
   /// The user's id. Display names are not unique, so this is what ties an event to one person.
   actorId       String?
+  /// staff | customer | system | anonymous. Null on events written before this column existed (the table is append-only,
+  /// so they cannot be back-filled).
+  actorKind     String?
   /// The ledger entry this event is about (a charge, payment, adjustment or void), so it can be traced exactly.
   ledgerEntry   LedgerEntry? @relation(fields: [ledgerEntryId], references: [id], onDelete: Restrict)
   ledgerEntryId String?

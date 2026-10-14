@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { ADMIN, alertWith, requireCredentials, signIn, statusWith } from "./helpers";
+import { ADMIN, alertWith, requireCredentials, signIn } from "./helpers";
 
 test.beforeAll(requireCredentials);
 
@@ -46,20 +46,24 @@ test.describe("signing in and out", () => {
 
     await page.getByRole("button", { name: "Sign out" }).click();
 
-    await expect(statusWith(page, "Couldn't sign out")).toBeVisible();
+    await expect(alertWith(page, "Couldn't sign out")).toBeVisible();
     await expect(page).not.toHaveURL(/\/login/);
   });
 
-  test("a session that ends while working returns to sign-in, remembering where they were", async ({ page, context }) => {
+  test("a session that ends while working says so and KEEPS the page, so what was typed is not lost", async ({ page, context }) => {
     await signIn(page, ADMIN);
     await page.goto("/customers");
-    await expect(page.getByRole("button", { name: "New credit application" })).toBeVisible();
-    await context.clearCookies();
-    // Opening the form refreshes the data, which is how the app learns the session has ended. The background refresh can
-    // learn it first and leave the page before this click lands; either order must end at sign-in.
-    await page.getByRole("button", { name: "New credit application" }).click({ timeout: 5_000 }).catch(() => undefined);
+    await page.getByRole("button", { name: "New credit application" }).click();
+    await page.getByLabel("Business name").fill("Half Typed Co");
 
-    await expect(page).toHaveURL(/\/login\?next=%2Fcustomers/);
+    // The session ends while the form is open. Saving is the first request that finds out.
+    await context.clearCookies();
+    await page.getByRole("button", { name: "Create application" }).click();
+
+    await expect(alertWith(page, "Your session has ended").first()).toBeVisible();
+    await expect(page).toHaveURL(/\/customers/); // still here, not thrown to the sign-in page
+    await expect(page.getByLabel("Business name")).toHaveValue("Half Typed Co"); // and the typing is still there
+    await expect(page.getByRole("link", { name: "Sign in (new tab)" })).toHaveAttribute("href", /\/login\?next=/);
   });
 
   // Last in this file on purpose: signing out ends every session that user has, which would cut off other tests' sessions.

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { ADMIN, EMPLOYEE, alertWith, drawer, newSession, openCustomer, requireCredentials, signIn, statusWith } from "./helpers";
 
-const ORIGIN = "http://127.0.0.1:3201";
+const ORIGIN = process.env.E2E_ORIGIN ?? "http://127.0.0.1:3201";
 
 test.beforeAll(requireCredentials);
 
@@ -16,7 +16,7 @@ test.describe("what an employee can and cannot do", () => {
     await expect(drawer(page).getByRole("button", { name: /^Void / })).toHaveCount(0);
 
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("link", { name: /CSV/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /CSV/ })).toHaveCount(0);
     await context.close();
   });
 

@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
+import { addDays } from "@/lib/domain/dates";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { INVITE_TTL_MS, RESET_TTL_MS } from "@/lib/domain/portal-users";
 import { prisma } from "@/lib/server/db";
@@ -404,7 +405,7 @@ describe("what a customer sees", () => {
     const { id: voidMe } = await recordEntry(id, entry("CHARGE", 70_00, { reference: "TYPO" }), EMPLOYEE);
     await voidEntry(id, voidMe, "Entered by mistake", ADMIN);
     await recordEntry(id, entry("CHARGE", 500_00, { reference: "INV-1" }), EMPLOYEE);
-    await recordEntry(id, entry("CHARGE", 800_00, { entryDate: "2099-01-01" }), EMPLOYEE);
+    await recordEntry(id, entry("CHARGE", 800_00, { entryDate: addDays(TODAY, 30) }), EMPLOYEE);
     await recordEntry(id, entry("PAYMENT", 100_00, { reference: "Check 9" }), EMPLOYEE);
     await recordEntry(id, entry("WRITE_OFF", 50_00, { note: "SECRET-WRITE-OFF-REASON", reference: "SECRET-REF" }), ADMIN);
 

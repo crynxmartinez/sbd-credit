@@ -83,7 +83,7 @@ export function Sidebar({ user }: { user: SessionUser }) {
             <div>{ROLE_LABEL[user.role]}</div>
           </div>
         </div>
-        Changes sync for everyone with access, within a few seconds.
+        Changes made by others appear within about 30 seconds.
       </div>
     </aside>
   );

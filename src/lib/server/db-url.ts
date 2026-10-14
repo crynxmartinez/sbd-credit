@@ -45,6 +45,27 @@ export function assertSafeTarget(url: string, nodeEnv: string | undefined): void
   }
 }
 
+/** The `sslmode` values that encrypt the connection. */
+const ENCRYPTED_SSL_MODES = new Set(["require", "verify-ca", "verify-full"]);
+
+/**
+ * In production the connection to the database must be encrypted. `withExplicitSsl` below only strengthens a mode that is
+ * already present, so an address with NO sslmode would otherwise connect in plain text across the network, carrying
+ * credentials and every ledger entry.
+ */
+export function assertSecureTransport(url: string, nodeEnv: string | undefined): void {
+  if (nodeEnv !== "production") return;
+  let mode: string | null = null;
+  try {
+    mode = new URL(url).searchParams.get("sslmode");
+  } catch {
+    // an unparseable address is reported by the other checks
+  }
+  if (!mode || !ENCRYPTED_SSL_MODES.has(mode)) {
+    throw new Error("DATABASE_URL must include sslmode=require (or verify-full) in production, so the connection to the database is encrypted.");
+  }
+}
+
 /**
  * Spell out the TLS mode pg already applies. `require` and `prefer` currently mean full certificate verification;
  * saying so explicitly keeps that true after pg changes its defaults (and silences its warning).
@@ -57,7 +78,18 @@ export function withExplicitSsl(url: string): string {
 }
 
 /** Opening a connection to a remote database is slow, so idle ones are kept for a while instead of closed at once. */
-const POOL = { max: 10, idleTimeoutMillis: 5 * 60_000, connectionTimeoutMillis: 20_000, keepAlive: true } as const;
+const POOL = {
+  max: 10,
+  idleTimeoutMillis: 5 * 60_000,
+  connectionTimeoutMillis: 20_000,
+  keepAlive: true,
+  // Without a delay the operating system's default (two hours on Linux) applies, so a firewall that silently drops idle
+  // connections after a few minutes leaves a dead socket that the next query finds out about the hard way.
+  keepAliveInitialDelayMillis: 10_000,
+} as const;
+
+/** A transaction left open by a crashed process would hold its customer row locked until the connection died. */
+const IDLE_IN_TRANSACTION_TIMEOUT = "30s";
 
 /**
  * The connection settings for one database address.
@@ -69,12 +101,13 @@ const POOL = { max: 10, idleTimeoutMillis: 5 * 60_000, connectionTimeoutMillis: 
  */
 export function poolConfigFor(connectionString: string, nodeEnv: string | undefined = process.env.NODE_ENV) {
   assertSafeTarget(connectionString, nodeEnv);
+  assertSecureTransport(connectionString, nodeEnv);
   const schema = schemaFromUrl(connectionString);
   return {
     connectionString: withExplicitSsl(connectionString),
     ...POOL,
     // assertSafeTarget already limited the schema to letters, digits and underscores, so this cannot be abused.
-    ...(schema ? { options: `-c search_path=${schema}` } : {}),
+    ...(schema ? { options: `-c search_path=${schema} -c idle_in_transaction_session_timeout=${IDLE_IN_TRANSACTION_TIMEOUT}` } : {}),
   };
 }
 

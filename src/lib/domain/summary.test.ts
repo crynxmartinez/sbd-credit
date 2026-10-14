@@ -53,6 +53,16 @@ describe("toSummary", () => {
     expect(toSummary(base(), [], ASOF)).toMatchObject({ id: "c1", businessName: "Acme Steel", version: 1 });
   });
 
+  test("available credit never exceeds the limit, even when the customer has overpaid", () => {
+    const overpaid = [
+      charge("a", 1_000_00, "2026-09-20"),
+      { id: "p", type: "PAYMENT" as const, amountCents: 3_000_00, entryDate: "2026-10-01", dueDate: null, voided: false },
+    ];
+    const summary = toSummary(base({ creditLimitCents: 10_000_00 }), overpaid, ASOF);
+    expect(summary.balanceCents).toBe(-2_000_00);
+    expect(summary.availableCents).toBe(10_000_00); // not $12,000
+  });
+
   test("available credit never goes below zero when over the limit", () => {
     const summary = toSummary(base(), [charge("a", 120_000_00, "2026-12-01")], ASOF);
     expect(summary.availableCents).toBe(0);

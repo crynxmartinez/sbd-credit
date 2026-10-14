@@ -150,3 +150,19 @@ describe("assertSameOrigin()", () => {
     expect(allowed({ origin: "not a url", host: "app.example" })).toThrow(/Request blocked/);
   });
 });
+
+describe("assertSameOrigin in production", () => {
+  const request = (headers: Record<string, string>) => new Request("https://credit.example.com/api/x", { method: "POST", headers });
+  const env = { NODE_ENV: "production", PUBLIC_BASE_URL: "https://credit.example.com" };
+
+  test("compares the Origin with the CONFIGURED address, not with whatever Host the request claims", () => {
+    expect(() => assertSameOrigin(request({ origin: "https://credit.example.com", host: "credit.example.com" }), env)).not.toThrow();
+    // A page on another site that has made the browser send a forged Host cannot get past the configured address.
+    expect(() => assertSameOrigin(request({ origin: "https://evil.example", host: "evil.example" }), env)).toThrow(/blocked/i);
+    expect(() => assertSameOrigin(request({ origin: "https://evil.example", "x-forwarded-host": "evil.example" }), env)).toThrow(/blocked/i);
+  });
+
+  test("outside production the Host header is still used (the dev server has no fixed public address)", () => {
+    expect(() => assertSameOrigin(request({ origin: "http://127.0.0.1:3200", host: "127.0.0.1:3200" }), { NODE_ENV: "development" })).not.toThrow();
+  });
+});

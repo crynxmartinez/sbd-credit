@@ -3,7 +3,7 @@ import { expect, test, type Browser, type BrowserContext, type Page } from "@pla
 import { randomBytes } from "node:crypto";
 import { ADMIN, EMPLOYEE, alertWith, drawer, newSession, openCustomer, requireCredentials, signIn } from "./helpers";
 
-const ORIGIN = process.env.PUBLIC_BASE_URL ?? "http://127.0.0.1:3201";
+const ORIGIN = process.env.E2E_ORIGIN ?? "http://127.0.0.1:3201";
 const NAME = "E2E Portal Co";
 const OTHER = "E2E Other Portal Co";
 const SUFFIX = randomBytes(4).toString("hex");

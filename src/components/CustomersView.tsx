@@ -2,6 +2,8 @@
 
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { ApiClientError } from "@/lib/client/api";
+import { downloadFile } from "@/lib/client/download";
 import { useCustomers } from "@/lib/client/queries";
 import { replaceUrlParams } from "@/lib/client/url-state";
 import {
@@ -17,9 +19,12 @@ import { can } from "@/lib/domain/roles";
 import { CustomerTable } from "./CustomerTable";
 import { DataStatus } from "./DataStatus";
 import { DownloadIcon, PlusIcon, SearchIcon } from "./icons";
+import { useToast } from "./Toast";
 import { useUi } from "./ui-context";
 
 const SEARCH_URL_DELAY_MS = 300;
+/** The "N customers shown" announcement waits for typing to pause, so a screen reader is not interrupted at every keystroke. */
+const ANNOUNCE_DELAY_MS = 800;
 const FILTERS: ReadonlyArray<{ value: StatusFilter; label: string }> = [
   { value: "all", label: "All" },
   ...CUSTOMER_STATUSES.map((status) => ({ value: status, label: STATUS_LABELS[status] })),
@@ -29,8 +34,31 @@ function isStatusFilter(value: string | null): value is StatusFilter {
   return value === "all" || (value !== null && (CUSTOMER_STATUSES as readonly string[]).includes(value));
 }
 
+function useSettled<T>(value: T, delayMs: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return settled;
+}
+
 export function CustomersView() {
   const { user, openNew } = useUi();
+  const notify = useToast();
+  const [downloading, setDownloading] = useState<string | null>(null);
+
+  async function download(kind: "customers" | "ledger") {
+    if (downloading) return;
+    setDownloading(kind);
+    try {
+      await downloadFile(`/api/export/${kind}`, `${kind}.csv`);
+    } catch (caught) {
+      notify(caught instanceof ApiClientError ? caught.message : "The download failed. Please try again.", "err");
+    } finally {
+      setDownloading(null);
+    }
+  }
   const searchParams = useSearchParams();
   const query = useCustomers();
   const { data, isLoading } = query;
@@ -64,6 +92,8 @@ export function CustomersView() {
     [customers, status, text, sort],
   );
 
+  const shown = useSettled(visible.length, ANNOUNCE_DELAY_MS);
+
   const toggleSort = (key: SortKey) =>
     setSort((current) => ({ key, direction: current.key === key && current.direction === "asc" ? "desc" : "asc" }));
 
@@ -79,12 +109,12 @@ export function CustomersView() {
         <div className="topbar-actions">
           {can(user.role, "export") ? (
             <>
-              <a className="btn" href="/api/export/customers" download>
-                <DownloadIcon /> Customers CSV
-              </a>
-              <a className="btn" href="/api/export/ledger" download>
-                <DownloadIcon /> Ledger CSV
-              </a>
+              <button type="button" className="btn" onClick={() => download("customers")} disabled={downloading !== null}>
+                <DownloadIcon /> {downloading === "customers" ? "Preparing…" : "Customers CSV"}
+              </button>
+              <button type="button" className="btn" onClick={() => download("ledger")} disabled={downloading !== null}>
+                <DownloadIcon /> {downloading === "ledger" ? "Preparing…" : "Ledger CSV"}
+              </button>
             </>
           ) : null}
           {can(user.role, "customer.create") ? (
@@ -130,13 +160,19 @@ export function CustomersView() {
           </div>
 
           <div className="sr-only" role="status">
-            {customers ? `${visible.length} ${visible.length === 1 ? "customer" : "customers"} shown` : ""}
+            {customers ? `${shown} ${shown === 1 ? "customer" : "customers"} shown` : ""}
           </div>
 
           {empty ? (
             <div className="empty-state">
               <h2>No customers yet</h2>
               <p>Add your first credit application to start tracking approvals, credit limits, and payment reminders.</p>
+              {can(user.role, "customer.create") ? (
+                <button type="button" className="btn btn-primary" onClick={openNew} style={{ marginTop: 12 }}>
+                  <PlusIcon size={15} />
+                  New credit application
+                </button>
+              ) : null}
             </div>
           ) : (
             <>

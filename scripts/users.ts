@@ -7,6 +7,7 @@
  *   npm run user -- reset-password <username>
  *   npm run user -- deactivate <username>
  *   npm run user -- activate <username>
+ *   npm run user -- unlock <username>        (clears a lock left by too many wrong passwords)
  *
  * The password comes from the NEW_USER_PASSWORD environment variable. If it is not set, a strong random one is made and
  * shown ONCE, here, so it never has to travel through chat or email in a form someone chose in a hurry.
@@ -72,11 +73,26 @@ async function resetPassword(args: string[]): Promise<void> {
   if (generated) console.log(`one-time password (shown only now): ${password}`);
 }
 
+async function unlock(args: string[]): Promise<void> {
+  const username = normalizeUsername(args[0] ?? "");
+  if (!username) fail("usage: npm run user -- unlock <username>");
+  const user = await prisma.appUser.findUnique({ where: { username } });
+  if (!user) return fail(`No account named "${username}".`);
+  // Anyone who knows a username can lock it with a few wrong guesses; this is how an administrator lets the person back in.
+  await prisma.appUser.update({ where: { id: user.id }, data: { failedLogins: 0, lockedUntil: null } });
+  console.log(`unlocked "${username}"`);
+}
+
 async function setActive(args: string[], active: boolean): Promise<void> {
   const username = normalizeUsername(args[0] ?? "");
   if (!username) fail(`usage: npm run user -- ${active ? "activate" : "deactivate"} <username>`);
   const user = await prisma.appUser.findUnique({ where: { username } });
   if (!user) return fail(`No account named "${username}".`);
+  if (!active && user.role === "SUPERADMIN" && user.active) {
+    // Deactivating the last super admin would leave nobody able to manage accounts.
+    const others = await prisma.appUser.count({ where: { role: "SUPERADMIN", active: true, id: { not: user.id } } });
+    if (others === 0) return fail(`"${username}" is the only active SUPERADMIN. Create another first, then deactivate this one.`);
+  }
   await prisma.appUser.update({
     where: { id: user.id },
     // Deactivating also ends every session they have open.
@@ -89,7 +105,8 @@ async function list(): Promise<void> {
   const users = await prisma.appUser.findMany({ orderBy: { username: "asc" } });
   if (users.length === 0) console.log("no accounts yet");
   for (const user of users) {
-    console.log(`${user.username.padEnd(24)} ${user.role.padEnd(10)} ${user.active ? "active" : "DEACTIVATED"}  ${user.name}`);
+    const locked = user.lockedUntil && user.lockedUntil > new Date() ? "  LOCKED until " + user.lockedUntil.toISOString() : "";
+    console.log(`${user.username.padEnd(24)} ${user.role.padEnd(10)} ${user.active ? "active" : "DEACTIVATED"}  ${user.name}${locked}`);
   }
 }
 
@@ -106,8 +123,10 @@ async function main(): Promise<void> {
       return setActive(args, false);
     case "activate":
       return setActive(args, true);
+    case "unlock":
+      return unlock(args);
     default:
-      return fail("usage: npm run user -- <list|create|reset-password|deactivate|activate> ...");
+      return fail("usage: npm run user -- <list|create|reset-password|deactivate|activate|unlock> ...");
   }
 }
 

@@ -9,6 +9,7 @@ export type Action =
   | "ledger.void"
   | "ledger.adjust"
   | "ledger.write_off"
+  | "ledger.backdate"
   | "ledger.reverse"
   | "decision.start_review"
   | "decision.approve"
@@ -28,6 +29,8 @@ const MINIMUM_ROLE: Readonly<Record<Action, Role>> = {
   "ledger.void": "ADMIN",
   "ledger.adjust": "ADMIN",
   "ledger.write_off": "ADMIN",
+  // Posting an entry into a month that is already closed changes figures that were reported.
+  "ledger.backdate": "ADMIN",
   "ledger.reverse": "ADMIN",
   "decision.start_review": "EMPLOYEE",
   "decision.approve": "ADMIN",

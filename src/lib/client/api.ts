@@ -2,6 +2,16 @@ import type { ApiResponse } from "@/lib/types";
 
 const REQUEST_TIMEOUT_MS = 15_000;
 
+/** Fired when the server says the session has ended. The app shows a banner; the page is not left, so typed work survives. */
+export const SESSION_EXPIRED_EVENT = "credit:session-expired";
+
+const SESSION_ENDED = "Your session has ended. Sign in again in a new tab, then come back: what you typed is still here.";
+
+/** The sign-in pages themselves answer 401 for a wrong password, which is not an expired session. */
+function onSignInScreen(path: string): boolean {
+  return path.startsWith("/api/auth/login") || path.startsWith("/api/portal/accept") || window.location.pathname === "/login" || window.location.pathname === "/accept-invite";
+}
+
 /**
  * Thrown for any failed API call.
  *
@@ -22,11 +32,6 @@ export class ApiClientError extends Error {
 }
 
 const UNCERTAIN_NOTE = " It may or may not have been saved. Trying again is safe: nothing will be recorded twice.";
-
-function loginUrl(): string {
-  const here = `${window.location.pathname}${window.location.search}`;
-  return `/login?next=${encodeURIComponent(here)}`;
-}
 
 export async function apiFetch<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const method = init.method ?? "GET";
@@ -58,9 +63,9 @@ export async function apiFetch<T>(path: string, init: { method?: string; body?: 
   }
 
   if (!payload.success) {
-    if (response.status === 401 && typeof window !== "undefined" && window.location.pathname !== "/login") {
-      // Return to where they were after signing in again. A full load also clears the previous user's cached data.
-      window.location.assign(loginUrl());
+    if (response.status === 401 && typeof window !== "undefined" && !onSignInScreen(path)) {
+      window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT));
+      throw new ApiClientError(401, "session_ended", SESSION_ENDED);
     }
     // A 500 is a crash somewhere in the middle of a write. 503 "busy" is the one server error that guarantees nothing was saved.
     const uncertain = isWrite && response.status >= 500 && payload.error.code !== "busy";

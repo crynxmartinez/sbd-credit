@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 
-/** Headers every response carries. A full Content-Security-Policy gets its own pass once the UI is ported. */
+/** Headers every response carries. The Content-Security-Policy (it needs a per-request nonce) is set by src/proxy.ts. */
 const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },

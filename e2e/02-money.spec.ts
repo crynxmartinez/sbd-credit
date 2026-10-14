@@ -87,7 +87,7 @@ test("a charge past the limit still records, and warns", async () => {
   await form("Add charge").getByLabel("Amount ($)").fill("1500");
   await form("Add charge").getByRole("button", { name: "Add charge" }).click();
 
-  await expect(statusWith(page, "over its credit limit")).toBeVisible();
+  await expect(alertWith(page, "over its credit limit")).toBeVisible();
   await expect.poll(() => balanceText(page)).toBe("$2,434.22");
 });
 

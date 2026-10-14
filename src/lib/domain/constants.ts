@@ -37,6 +37,12 @@ export const UTILIZATION_DISPLAY_CAP_PCT = 200;
 
 /** A payment due within this many days (and not yet overdue) is flagged. */
 export const DUE_SOON_DAYS = 7;
+/**
+ * How far ahead an entry may be dated. A typo year (2099) would otherwise hide an entry for decades while a toast said it
+ * was recorded. A policy default: change it here.
+ */
+export const MAX_POSTDATE_DAYS = 90;
+
 /** An application waiting this many days without a decision is flagged. */
 export const STALE_APPLICATION_DAYS = 5;
 

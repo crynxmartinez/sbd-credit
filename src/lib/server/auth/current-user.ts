@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { can, isRole, type Action } from "@/lib/domain/roles";
 import type { SessionUser } from "@/lib/types";
 import { ApiError } from "../http";
@@ -13,25 +14,25 @@ export async function startSession(user: { id: string; sessionVersion: number })
 /**
  * Signs out. Deleting the cookie only forgets the token in this browser; a copied token would still work for its full
  * lifetime. Bumping sessionVersion makes every outstanding token for this user fail the check in userFromCookie.
+ *
+ * The session is revoked FIRST and the cookie removed only after that worked. If the database cannot be reached this
+ * fails and the person is told, with their cookie intact so they can simply try again; clearing it first would leave a
+ * still-valid token somewhere with no way left to end it.
  */
-export async function endSession(): Promise<{ revoked: boolean }> {
+export async function endSession(): Promise<void> {
   const payload = await readSessionPayload("staff");
-
-  // First, so this browser is signed out whatever happens to the database next.
-  await clearSessionCookie("staff");
-  if (!payload) return { revoked: true };
-
-  try {
-    await prisma.appUser.updateMany({
-      where: { id: payload.u, sessionVersion: payload.v },
-      data: { sessionVersion: { increment: 1 } },
-    });
-    return { revoked: true };
-  } catch (error) {
-    // The cookie is gone here, but a copy of the token elsewhere stays valid until it expires. Say so in the log.
-    log("error", "auth.logout_revoke_failed", { userId: payload.u, error });
-    return { revoked: false };
+  if (payload) {
+    try {
+      await prisma.appUser.updateMany({
+        where: { id: payload.u, sessionVersion: payload.v },
+        data: { sessionVersion: { increment: 1 } },
+      });
+    } catch (error) {
+      log("error", "auth.logout_revoke_failed", { userId: payload.u, error });
+      throw new ApiError(503, "signout_failed", "Couldn't sign you out. Please try again.");
+    }
   }
+  await clearSessionCookie("staff");
 }
 
 function toSessionUser(user: { id: string; username: string; name: string; role: string }): SessionUser | null {
@@ -57,9 +58,8 @@ async function devAutoLogin(): Promise<SessionUser | null> {
   return user && user.active ? toSessionUser(user) : null;
 }
 
-export async function getCurrentUser(): Promise<SessionUser | null> {
-  return (await userFromCookie()) ?? (await devAutoLogin());
-}
+/** One lookup per page render, however many layouts and pages ask (they all render within the same request). */
+export const getCurrentUser = cache(async (): Promise<SessionUser | null> => (await userFromCookie()) ?? (await devAutoLogin()));
 
 /** For route handlers: the signed-in user, or a 401. Pass an action to also require permission for it. */
 export async function requireUser(action?: Action): Promise<SessionUser> {

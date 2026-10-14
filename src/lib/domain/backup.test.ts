@@ -114,3 +114,18 @@ describe("customer portal contacts in a backup", () => {
     expect(() => reviveBackup(withContacts([contact, { ...contact, id: "p2" }]))).toThrow(/same email/);
   });
 });
+
+describe("sign-in accounts in a backup", () => {
+  const user = { id: "u1", username: "dana", name: "Dana", role: "ADMIN", active: true };
+
+  test("are checked: an unknown role, a missing username or a repeated username is refused before anything is written", () => {
+    expect(() => reviveBackup(file({ users: [{ ...user, role: "OWNER" }] }))).toThrow(/role/);
+    expect(() => reviveBackup(file({ users: [{ ...user, username: "" }] }))).toThrow(/username/);
+    expect(() => reviveBackup(file({ users: [user, { ...user, id: "u2" }] }))).toThrow(/same username/);
+  });
+
+  test("keep their original id, role and active flag, and never carry a credential", () => {
+    const revived = reviveBackup(file({ users: [{ ...user, passwordHash: "x", failedLogins: 3 }] })).users;
+    expect(revived).toEqual([user]);
+  });
+});

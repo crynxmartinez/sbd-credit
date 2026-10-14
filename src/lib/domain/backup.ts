@@ -68,6 +68,24 @@ function reviveContacts(rows: Row[]): Row[] {
   });
 }
 
+const KNOWN_ROLES: ReadonlySet<unknown> = new Set(["EMPLOYEE", "ADMIN", "SUPERADMIN"]);
+
+/** Only the columns a restored account needs, checked, so a damaged file cannot create an account that cannot be reasoned about. */
+function reviveUsers(raw: unknown): BackupFile["users"] {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) throw new Error("The backup's users section is damaged.");
+  const seen = new Set<string>();
+  return raw.map((entry, index) => {
+    const row = entry as Record<string, unknown>;
+    if (typeof row?.id !== "string" || row.id === "") throw new Error(`users[${index}] has no id.`);
+    if (typeof row.username !== "string" || row.username === "") throw new Error(`users[${index}] has no username.`);
+    if (!KNOWN_ROLES.has(row.role)) throw new Error(`users[${index}] has an unknown role.`);
+    if (seen.has(row.username)) throw new Error(`users[${index}] has the same username as an earlier account.`);
+    seen.add(row.username);
+    return { id: row.id, username: row.username, name: String(row.name ?? row.username), role: String(row.role), active: row.active === true };
+  });
+}
+
 /**
  * Validates a parsed backup and returns it with real Date objects. Throws a specific message on anything wrong, so a
  * damaged or truncated file is refused before a single row is written.
@@ -122,7 +140,7 @@ export function reviveBackup(raw: unknown): BackupFile {
     ledger: reviveDates(file.ledger, DATE_FIELDS.ledger, "ledger"),
     audit: reviveDates(file.audit, DATE_FIELDS.audit, "audit"),
     portalContacts: reviveContacts(rawContacts),
-    users: Array.isArray(file.users) ? (file.users as BackupFile["users"]) : [],
+    users: reviveUsers(file.users),
   };
 }
 

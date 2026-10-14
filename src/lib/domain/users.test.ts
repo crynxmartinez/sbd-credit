@@ -74,3 +74,17 @@ describe("normalizeIdentifier", () => {
     expect(normalizeIdentifier("Dana.Whitfield")).toBe("dana.whitfield");
   });
 });
+
+describe("common passwords", () => {
+  test.each(["password1234", "Password-1234", "qwertyuiop12", "LetMeIn123456", "iloveyou1234", "welcome12345", "changeme1234", "steelbuilding1", "Steel-Building-Depot-1"])(
+    "refuses %s: it is a well-known password or the company name",
+    (password) => {
+      expect(validatePassword(password, "someone").join(" ")).toMatch(/too common/);
+    },
+  );
+
+  test("still accepts a long unusual password and a passphrase", () => {
+    expect(validatePassword("correct-horse-battery-9", "dana")).toEqual([]);
+    expect(validatePassword("my dog likes walks by the river", "dana")).toEqual([]);
+  });
+});

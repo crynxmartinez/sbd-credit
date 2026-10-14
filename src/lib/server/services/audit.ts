@@ -9,6 +9,8 @@ interface AuditInput {
   actor: string;
   /** Display names are not unique; the id is what ties an event to one person. */
   actorId: string;
+  /** Who this is: a member of staff, a customer, or the system itself. */
+  actorKind?: "staff" | "customer" | "system" | "anonymous";
   /** The ledger entry this event is about, when it is about one. */
   ledgerEntryId?: string;
   changes?: readonly FieldChange[];
@@ -23,6 +25,7 @@ export async function writeAudit(tx: Prisma.TransactionClient, input: AuditInput
       summary: input.summary,
       actor: input.actor,
       actorId: input.actorId,
+      actorKind: input.actorKind ?? "staff",
       ledgerEntryId: input.ledgerEntryId ?? null,
       changes: input.changes && input.changes.length > 0 ? (input.changes as unknown as Prisma.InputJsonValue) : undefined,
     },

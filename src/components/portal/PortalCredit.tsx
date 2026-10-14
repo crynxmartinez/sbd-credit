@@ -3,6 +3,7 @@ import { formatDate } from "@/lib/domain/dates";
 import { formatCents } from "@/lib/domain/money";
 import { PORTAL_ENTRY_LIMIT, type PortalEntry, type PortalEntryKind, type PortalView } from "@/lib/domain/portal";
 import { UtilBar } from "../ui";
+import { PrintButton } from "./PrintButton";
 
 const KIND_LABEL: Readonly<Record<PortalEntryKind, string>> = {
   purchase: "Purchase",
@@ -53,9 +54,12 @@ export function PortalCredit({ view }: { view: PortalView }) {
 
   return (
     <div className="portal-stack">
-      <div>
-        <h1 className="page-title">{view.businessName}</h1>
-        <div className="page-sub">Your credit account with Steel Building Depot, as of {formatDate(view.asOf)}.</div>
+      <div className="portal-title-row">
+        <div>
+          <h1 className="page-title">{view.businessName}</h1>
+          <div className="page-sub">Your credit account with Steel Building Depot, as of {formatDate(view.asOf)}.</div>
+        </div>
+        <PrintButton />
       </div>
 
       <StandingNotice standing={view.standing} />

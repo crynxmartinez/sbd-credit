@@ -22,12 +22,29 @@ export const normalizeUsername = (value: string): string => value.trim().toLower
 /** What was typed on the sign-in page (a staff username or a customer email), made comparable: folded, trimmed, lower-cased. */
 export const normalizeIdentifier = (value: string): string => value.normalize("NFKC").trim().toLowerCase();
 
+/**
+ * The letters of a password with everything else stripped, compared with these. "Password-1234", "password1234" and
+ * "PASSWORD!" are all just "password". Kept short on purpose: it catches the guesses an attacker tries first, and the
+ * company's own name, not every weak password.
+ */
+const COMMON_PASSWORD_WORDS: ReadonlySet<string> = new Set([
+  "password", "passw", "qwerty", "qwertyuiop", "qwertyuiopasdf", "asdfghjkl", "zxcvbnm", "letmein", "welcome", "changeme",
+  "iloveyou", "admin", "administrator", "login", "master", "monkey", "dragon", "sunshine", "princess", "football",
+  "baseball", "superman", "trustno", "abcdefghijkl", "abcdefghijklmnop", "steel", "steelbuilding", "steelbuildingdepot",
+  "depot", "credit", "creditapp", "credittracker",
+]);
+
+export function isCommonPassword(password: string): boolean {
+  return COMMON_PASSWORD_WORDS.has(password.toLowerCase().replace(/[^a-z]/g, ""));
+}
+
 export function validatePassword(password: string, username: string): string[] {
   const problems: string[] = [];
   if (password.length < MIN_PASSWORD_LENGTH) problems.push(`The password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
   if (new TextEncoder().encode(password).length > MAX_PASSWORD_BYTES) problems.push(`The password must be at most ${MAX_PASSWORD_BYTES} bytes long (accented and non-English characters count as more than one).`);
   if (username && password.toLowerCase().includes(username.toLowerCase())) problems.push("The password must not contain the username.");
   if (new Set(password).size < 4) problems.push("The password is too repetitive.");
+  if (isCommonPassword(password)) problems.push("That password is too common. Choose something harder to guess.");
   return problems;
 }
 

@@ -79,6 +79,8 @@ export interface AuditEventDto {
 /** The customer list plus the business day every figure in it was computed for. */
 export interface CustomerListDto {
   asOf: string;
+  /** The time zone the books are kept in, so a timestamp can be shown on the day the books say it happened. */
+  timeZone: string;
   customers: CustomerSummary[];
 }
 

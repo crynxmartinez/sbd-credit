@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { can, isRole, type Role } from "./roles";
-import { applyDecision, canTransition, type DecisionAction } from "./status";
+import { applyDecision, availableDecisions, canTakePayment, canTransition, hasCreditLine, showsCreditPanel, type DecisionAction } from "./status";
 
 describe("canTransition", () => {
   test.each([
@@ -92,5 +92,59 @@ describe("roles", () => {
   test("only a superadmin manages users", () => {
     expect(can("ADMIN", "users.manage")).toBe(false);
     expect(can("SUPERADMIN", "users.manage")).toBe(true);
+  });
+});
+
+describe("hasCreditLine / canTakePayment / showsCreditPanel", () => {
+  test("only approved and suspended accounts have a credit line", () => {
+    expect(hasCreditLine("approved")).toBe(true);
+    expect(hasCreditLine("suspended")).toBe(true);
+    for (const status of ["submitted", "under_review", "denied"] as const) expect(hasCreditLine(status)).toBe(false);
+  });
+
+  test("a payment is taken wherever there is a ledger, and on any account with a credit line", () => {
+    expect(canTakePayment("approved", false)).toBe(true);
+    expect(canTakePayment("suspended", false)).toBe(true);
+    expect(canTakePayment("denied", true)).toBe(true); // reopened or denied, but still owes money
+    expect(canTakePayment("under_review", true)).toBe(true);
+    expect(canTakePayment("denied", false)).toBe(false);
+    expect(canTakePayment("submitted", false)).toBe(false);
+  });
+
+  test("the credit panel is shown for a credit line, and for ANY account that still owes or is owed money", () => {
+    expect(showsCreditPanel("approved", 0)).toBe(true);
+    expect(showsCreditPanel("denied", 0)).toBe(false);
+    expect(showsCreditPanel("denied", 250_00)).toBe(true); // the gap the audit found: it owes, staff must be able to record a payment
+    expect(showsCreditPanel("under_review", -40_00)).toBe(true); // a credit balance
+    expect(showsCreditPanel("submitted", 0)).toBe(false);
+  });
+});
+
+describe("availableDecisions", () => {
+  test("a submitted application: staff can start a review, only an admin can decide", () => {
+    expect(availableDecisions("submitted", "EMPLOYEE")).toEqual(["start_review"]);
+    expect(availableDecisions("submitted", "ADMIN")).toEqual(["start_review", "approve", "deny"]);
+  });
+
+  test("under review: only admins decide", () => {
+    expect(availableDecisions("under_review", "EMPLOYEE")).toEqual([]);
+    expect(availableDecisions("under_review", "ADMIN")).toEqual(["approve", "deny"]);
+  });
+
+  test("approved can be suspended, denied and suspended can be reopened, by admins only", () => {
+    expect(availableDecisions("approved", "ADMIN")).toEqual(["suspend"]);
+    expect(availableDecisions("approved", "EMPLOYEE")).toEqual([]);
+    expect(availableDecisions("denied", "SUPERADMIN")).toEqual(["reopen"]);
+    expect(availableDecisions("suspended", "ADMIN")).toEqual(["reopen"]);
+    expect(availableDecisions("suspended", "EMPLOYEE")).toEqual([]);
+  });
+
+  test("agrees with applyDecision: nothing offered is refused, and everything else is", () => {
+    const statuses = ["submitted", "under_review", "approved", "denied", "suspended"] as const;
+    const actions: DecisionAction[] = ["start_review", "approve", "deny", "suspend", "reopen"];
+    for (const status of statuses) {
+      const offered = availableDecisions(status, "SUPERADMIN");
+      for (const action of actions) expect(applyDecision(status, action).ok, `${status}/${action}`).toBe(offered.includes(action));
+    }
   });
 });

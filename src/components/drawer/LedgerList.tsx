@@ -4,9 +4,10 @@ import { useState, type FormEvent } from "react";
 import { ApiClientError } from "@/lib/client/api";
 import { useBusinessToday, useReverseEntry, useVoidEntry } from "@/lib/client/queries";
 import { MIN_REASON_LENGTH } from "@/lib/domain/constants";
-import { formatDate, isInClosedMonth } from "@/lib/domain/dates";
+import { correctionFor, type Correction } from "@/lib/domain/corrections";
+import { formatDate } from "@/lib/domain/dates";
+import { effectOnBalance } from "@/lib/domain/ledger";
 import { formatCents } from "@/lib/domain/money";
-import { can } from "@/lib/domain/roles";
 import type { LedgerEntryDto } from "@/lib/types";
 import { useAutoFocus } from "../useAutoFocus";
 import { useToast } from "../Toast";
@@ -41,6 +42,7 @@ function ReasonForm(props: ReasonFormProps) {
 
   async function submit(event: FormEvent) {
     event.preventDefault();
+    if (pending) return;
     setError(null);
     if (reason.trim().length < MIN_REASON_LENGTH) return setError(props.missingReason);
     setPending(true);
@@ -108,41 +110,26 @@ function ReverseForm({ customerId, entry, onDone }: { customerId: string; entry:
   );
 }
 
-/** Whether an entry reduces what the customer owes. */
-function reduces(entry: LedgerEntryDto): boolean {
-  if (entry.type === "PAYMENT" || entry.type === "WRITE_OFF") return true;
-  return entry.type !== "CHARGE" && entry.amountCents < 0;
-}
-
+/** Direction comes from the same rule the server and the CSV use, so a type added later cannot be drawn the wrong way. */
 function amountText(entry: LedgerEntryDto): { text: string; paying: boolean } {
-  const money = formatCents(Math.abs(entry.amountCents), { fixed: true });
-  const paying = reduces(entry);
-  return { text: `${paying ? "−" : "+"}${money}`, paying };
+  const effect = effectOnBalance(entry.type, entry.amountCents);
+  const money = formatCents(Math.abs(effect), { fixed: true });
+  return { text: `${effect < 0 ? "−" : "+"}${money}`, paying: effect < 0 };
 }
-
-type Correction = "void" | "reverse";
 
 export function LedgerList({ customerId, ledger }: { customerId: string; ledger: readonly LedgerEntryDto[] }) {
   const { user } = useUi();
   const today = useBusinessToday();
   const [correcting, setCorrecting] = useState<{ id: string; how: Correction } | null>(null);
-  const canVoid = can(user.role, "ledger.void");
-  const canReverse = can(user.role, "ledger.reverse");
 
   if (ledger.length === 0) return <div style={{ color: "var(--text-faint)", fontSize: "12.5px", padding: "10px 0" }}>No transactions yet.</div>;
 
-  /** This month's entries can be voided (a typo); anything from a closed month is corrected with a reversal instead. */
-  function correctionFor(entry: LedgerEntryDto): Correction | null {
-    if (entry.voided || entry.reversed || entry.type === "REVERSAL") return null;
-    if (isInClosedMonth(entry.entryDate, today)) return canReverse ? "reverse" : null;
-    return canVoid ? "void" : null;
-  }
-
   return (
-    <div>
+    <ul className="ledger-list">
       {ledger.map((entry) => {
         const { text, paying } = amountText(entry);
-        const how = correctionFor(entry);
+        // This month's entries can be voided (a typo); anything from a closed month is reversed instead. One rule, shared with the server.
+        const how = correctionFor(entry, today, user.role);
         const details = [
           formatDate(entry.entryDate),
           entry.reference,
@@ -152,9 +139,9 @@ export function LedgerList({ customerId, ledger }: { customerId: string; ledger:
         ].filter(Boolean);
         const verb = how === "reverse" ? "Reverse" : "Void";
         return (
-          <div key={entry.id} className={`ledger-item${entry.voided ? " voided" : ""}${entry.reversed ? " reversed" : ""}`}>
+          <li key={entry.id} className={`ledger-item${entry.voided ? " voided" : ""}${entry.reversed ? " reversed" : ""}`}>
             <div className="ledger-main">
-              {LABEL[entry.type]}
+              <span className="ledger-label">{LABEL[entry.type]}</span>
               {entry.voided ? <span className="void-tag">Voided</span> : null}
               {entry.reversed ? <span className="void-tag">Reversed</span> : null}
             </div>
@@ -177,9 +164,9 @@ export function LedgerList({ customerId, ledger }: { customerId: string; ledger:
             ) : null}
             {correcting?.id === entry.id && correcting.how === "void" ? <VoidForm customerId={customerId} entry={entry} onDone={() => setCorrecting(null)} /> : null}
             {correcting?.id === entry.id && correcting.how === "reverse" ? <ReverseForm customerId={customerId} entry={entry} onDone={() => setCorrecting(null)} /> : null}
-          </div>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }

@@ -6,14 +6,21 @@ export function StatusBadge({ status }: { status: CustomerStatus }) {
   return <span className={`badge badge-${status}`}>{STATUS_LABELS[status]}</span>;
 }
 
+const LEVEL_WORDS: Readonly<Record<UtilizationLevel, string>> = { ok: "", warn: " (near the limit)", crit: " (at or over the limit)" };
+
 export function UtilBar({ pct, level, wide }: { pct: number; level: UtilizationLevel; wide?: boolean }) {
   const cls = level === "ok" ? "util-bar" : `util-bar ${level}`;
+  const words = LEVEL_WORDS[level];
   return (
     <>
-      <div className="util-bar-wrap" style={wide ? { width: "100%" } : undefined} role="img" aria-label={`${pct}% of credit limit used`}>
+      {/* The words, not just the colour, carry the level. The text below is the same message, so the picture is hidden from a screen reader. */}
+      <div className="util-bar-wrap" style={wide ? { width: "100%" } : undefined} aria-hidden="true">
         <div className={cls} style={{ width: `${Math.min(100, pct)}%` }} />
       </div>
-      <div className="util-pct">{wide ? `${pct}% of credit limit used` : `${pct}%`}</div>
+      <div className="util-pct">
+        {wide ? `${pct}% of credit limit used` : `${pct}%`}
+        {words ? <span className={wide ? undefined : "sr-only"}>{words}</span> : null}
+      </div>
     </>
   );
 }

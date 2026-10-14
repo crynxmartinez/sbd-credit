@@ -11,7 +11,8 @@ export function toSummary(customer: CustomerBase, entries: readonly LedgerRecord
     ...customer,
     balanceCents: aging.balanceCents,
     creditCents: aging.creditCents,
-    availableCents: Math.max(0, customer.creditLimitCents - aging.balanceCents),
+    // Never more than the limit itself: an overpaid account does not get a bigger line than it was given.
+    availableCents: Math.min(customer.creditLimitCents, Math.max(0, customer.creditLimitCents - aging.balanceCents)),
     utilizationPct: pct,
     utilizationLevel: utilizationLevel(pct),
     overdueCents: aging.overdueCents,

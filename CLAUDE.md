@@ -21,8 +21,9 @@ Own app, same Postgres database server as the Storage Materials shipper app.
 - `npm run dev` — dev server on http://localhost:3200 (against `credit_dev`)
 - `npm run test` / `npm run test:db` / `npm run typecheck` / `npm run lint`
 - `npm run db:migrate` — apply migrations to `credit_dev`; `npm run seed` — dev sign-in + demo customers
-- `npm run backup` / `npm run restore -- <file>` — JSON snapshot (no password hashes) / restore into an EMPTY schema
-- `npm run user -- list|create|reset-password|deactivate|activate` — sign-in accounts
+- `npm run backup` / `npm run restore -- <file>` — JSON snapshot (no password hashes) / restore into an EMPTY schema (development schemas only; production commands are in `docs/PRODUCTION.md`)
+- `npm run restore-drill` — backs up a schema, restores it into a scratch one and compares every row. Run it after touching the schema, backup or restore code
+- `npm run user -- list|create|reset-password|deactivate|activate|unlock` — sign-in accounts
 - `npm run e2e` — Playwright (Edge) against `credit_test_e2e`; run it after any UI or auth change
 - Production runbook: `docs/PRODUCTION.md`
 - Customer portal: Phase 1 built; plan and what is next in `docs/PORTAL_PLAN.md`
@@ -36,13 +37,17 @@ Own app, same Postgres database server as the Storage Materials shipper app.
 
 ## Domain rules
 - Money is integer cents everywhere. Never floats. Display a broken amount as a dash, never "$0".
-- Every write goes through `transaction()` in `src/lib/server/tx.ts` (lock and statement timeouts, "busy" mapping) and
-  carries a request key, so a retried request is recorded once.
-- "Today" is the business day (`BUSINESS_TIME_ZONE`), decided by the server and returned with the data. The browser never sends a date for this.
+- Every write goes through `transaction()` in `src/lib/server/tx.ts` (lock and statement timeouts, an honest "nothing was
+  saved" vs "may or may not have been saved" answer). Creating a customer, recording an entry and reversing one carry a
+  request key, so a retry is recorded once, and a key reused with DIFFERENT details is refused (`domain/idempotency.ts`).
+  The other writes (void, decide, update, portal access) are protected by their own state or version checks instead.
+- "Today" is the business day (`BUSINESS_TIME_ZONE`), decided by the server and returned with the data. The browser never sends a date for this. Services take a `Clock` (`src/lib/server/clock.ts`) instead of reading the time themselves.
+- One copy of each rule, in `domain/`, used by the service AND the screen: `hasCreditLine` / `canTakePayment` / `showsCreditPanel` / `availableDecisions` (`status.ts`), `correctionFor` (void or reverse), `entryDateWindow` / `entryDateIssue` (which dates a role may use), `effectOnBalance`. Do not re-implement them in a component.
 - Balance is never stored: it is the sum of ledger entries. Ledger and audit rows are append-only; mistakes are voided, not edited.
 - Ledger types: CHARGE adds; PAYMENT and WRITE_OFF reduce; ADJUSTMENT and REVERSAL are signed. `effectOnBalance()` in `domain/ledger.ts` is the one place that knows the sign. The SQL in `services/ledger.ts` mirrors it, so change both together.
 - A void is only for the current business month. Older entries are corrected by a reversal dated today (`reverseEntry`). A reversal is never posted directly, never reversed, and never voided; a reversed entry is never voided.
-- A write-off and a reversal always carry a reason (also a CHECK constraint). Write-offs and reversals are ADMIN actions.
+- A write-off and a reversal always carry a reason (also a CHECK constraint). Write-offs and reversals are ADMIN actions. A write-off cannot exceed what is owed on its date AND today, and a charge it covers cannot be voided or reversed until the write-off is reversed.
+- Only an admin may post into a closed month (`ledger.backdate`); no entry may be dated more than `MAX_POSTDATE_DAYS` ahead; an adjustment that raises what is owed needs an approved account.
 - Customer portal: customers are `CustomerUser`, a separate table and cookie from staff (`AppUser`). The two never share a role column, and `src/lib/portal-boundaries.test.ts` fails if portal code reaches staff services or the reverse.
 - What a customer may see is whitelisted in `domain/portal.ts` (`toPortalView`), field by field. Never pass a customer-facing page a staff object. A customer is never locked out by wrong passwords (their email is guessable); see `auth/lockout.ts`.
 - Invitation links are built from `PUBLIC_BASE_URL` (never the request Host) with the token in the URL fragment. Only the token's hash is stored. Accepting and re-sending lock the contact row, so they are race-safe.

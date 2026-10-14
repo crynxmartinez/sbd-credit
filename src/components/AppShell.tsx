@@ -3,8 +3,9 @@
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { useMemo, useState, type ReactNode } from "react";
-import { replaceUrlParams } from "@/lib/client/url-state";
+import { closeUrlPanel, pushUrlParams } from "@/lib/client/url-state";
 import type { CustomerSummary, SessionUser } from "@/lib/types";
+import { SessionExpiredBanner } from "./SessionExpiredBanner";
 import { Sidebar, MobileNav } from "./Sidebar";
 import { UiContext, type UiActions } from "./ui-context";
 
@@ -28,8 +29,9 @@ export function AppShell({ user, children }: { user: SessionUser; children: Reac
       user,
       openNew: () => setModal({ mode: "new" }),
       openEdit: (customer) => setModal({ mode: "edit", customer }),
-      // The open customer lives in the address bar, so a link to a customer opens straight to them.
-      openCustomer: (id) => replaceUrlParams({ [DRAWER_PARAM]: id }),
+      // The open customer lives in the address bar, so a link to a customer opens straight to them. Opening adds a history
+      // entry, so the browser's Back button closes the drawer instead of leaving the page.
+      openCustomer: (id) => pushUrlParams({ [DRAWER_PARAM]: id }),
     }),
     [user],
   );
@@ -39,6 +41,7 @@ export function AppShell({ user, children }: { user: SessionUser; children: Reac
       <a className="skip-link" href="#main">
         Skip to content
       </a>
+      <SessionExpiredBanner />
       <div className="app">
         <Sidebar user={user} />
         <main className="main" id="main" tabIndex={-1}>
@@ -48,7 +51,7 @@ export function AppShell({ user, children }: { user: SessionUser; children: Reac
       </div>
 
       {openCustomerId ? (
-        <CustomerDrawer key={openCustomerId} id={openCustomerId} onClose={() => replaceUrlParams({ [DRAWER_PARAM]: null })} />
+        <CustomerDrawer key={openCustomerId} id={openCustomerId} onClose={() => closeUrlPanel({ [DRAWER_PARAM]: null })} />
       ) : null}
 
       {modal ? (
@@ -58,7 +61,7 @@ export function AppShell({ user, children }: { user: SessionUser; children: Reac
           onClose={() => setModal(null)}
           onCreated={(id) => {
             setModal(null);
-            replaceUrlParams({ [DRAWER_PARAM]: id });
+            pushUrlParams({ [DRAWER_PARAM]: id });
           }}
         />
       ) : null}

@@ -9,14 +9,19 @@ const DATABASE_TIMEOUT_MS = 3_000;
  */
 export async function GET() {
   let database: "ok" | "error" = "error";
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
       prisma.$queryRaw`SELECT 1`,
-      new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), DATABASE_TIMEOUT_MS)),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timeout")), DATABASE_TIMEOUT_MS);
+      }),
     ]);
     database = "ok";
   } catch (error) {
     log("error", "health.database_unreachable", { error });
+  } finally {
+    clearTimeout(timer);
   }
 
   const healthy = database === "ok";

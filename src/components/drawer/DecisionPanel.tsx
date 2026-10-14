@@ -6,7 +6,7 @@ import { useBusinessToday, useDecision } from "@/lib/client/queries";
 import { PAYMENT_TERMS } from "@/lib/domain/constants";
 import { centsToDecimal } from "@/lib/domain/csv";
 import { parseMoneyToCents } from "@/lib/domain/money";
-import { can } from "@/lib/domain/roles";
+import { availableDecisions } from "@/lib/domain/status";
 import type { CustomerSummary } from "@/lib/types";
 import { decisionSchema } from "@/lib/validation";
 import { useAutoFocus } from "../useAutoFocus";
@@ -128,39 +128,38 @@ function InstantAction({ customer, action, label, success, primary }: {
 
 export function DecisionPanel({ customer, active, setActive }: Props) {
   const { user } = useUi();
-  const isAdmin = can(user.role, "decision.approve");
   const { status } = customer;
   const close = () => setActive(null);
+  // Exactly the decisions the workflow would accept for this status and this role: the screen and the server cannot disagree.
+  const decisions = availableDecisions(status, user.role);
 
   const pendingApplication = status === "submitted" || status === "under_review";
-  if (!pendingApplication && status !== "approved" && status !== "denied" && status !== "suspended") return null;
 
   return (
     <div>
       {pendingApplication ? (
         <>
-          <div className="kv-label" style={{ marginBottom: 8 }}>Approval process</div>
+          <h3 className="kv-label" style={{ marginBottom: 8 }}>Approval process</h3>
           <div className="action-row">
-            {status === "submitted" && can(user.role, "decision.start_review") ? (
+            {decisions.includes("start_review") ? (
               <InstantAction customer={customer} action="start_review" label="Start review" success="Moved to under review." />
             ) : null}
-            {isAdmin ? (
-              <>
-                <button type="button" className="btn btn-sm btn-primary" onClick={() => setActive("approve")}>Approve</button>
-                <button type="button" className="btn btn-sm btn-danger" onClick={() => setActive("deny")}>Deny</button>
-              </>
-            ) : (
-              <span className="field-hint">An admin makes approval decisions.</span>
-            )}
+            {decisions.includes("approve") ? (
+              <button type="button" className="btn btn-sm btn-primary" onClick={() => setActive("approve")}>Approve</button>
+            ) : null}
+            {decisions.includes("deny") ? (
+              <button type="button" className="btn btn-sm btn-danger" onClick={() => setActive("deny")}>Deny</button>
+            ) : null}
+            {!decisions.includes("approve") ? <span className="field-hint">An admin makes approval decisions.</span> : null}
           </div>
         </>
       ) : null}
-      {(status === "denied" || status === "suspended") && isAdmin ? (
+      {decisions.includes("reopen") ? (
         <div className="action-row">
           <InstantAction customer={customer} action="reopen" label="Reopen for review" success="Reopened for review." />
         </div>
       ) : null}
-      {status === "approved" && isAdmin ? (
+      {decisions.includes("suspend") ? (
         <div className="action-row">
           <button type="button" className="btn btn-sm btn-danger" onClick={() => setActive("suspend")}>Suspend credit</button>
         </div>

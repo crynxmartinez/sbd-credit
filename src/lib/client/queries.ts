@@ -9,12 +9,18 @@ import { apiFetch } from "./api";
 /** Data refreshes on focus and on this interval, which is how teammates see each other's changes. */
 const REFRESH_MS = 30_000;
 
-/** The customer list, with the business day its figures were computed for. The dashboard is derived from this same data. */
-export function useCustomers() {
+/**
+ * The customer list, with the business day its figures were computed for. The dashboard is derived from this same data.
+ *
+ * Only the screen that SHOWS the list polls it. Everything else that reads it (a form wanting today's date, the open
+ * drawer) passes `poll: false`: each reader sets its own timer, so without this an open drawer made the same request
+ * three or four times every 30 seconds.
+ */
+export function useCustomers({ poll = true }: { poll?: boolean } = {}) {
   return useQuery({
     queryKey: ["customers"],
     queryFn: () => apiFetch<CustomerListDto>("/api/customers"),
-    refetchInterval: REFRESH_MS,
+    refetchInterval: poll ? REFRESH_MS : false,
     // A failed refresh keeps showing the last good data (with a notice) instead of blanking the screen.
     placeholderData: keepPreviousData,
   });
@@ -26,8 +32,14 @@ export function useCustomers() {
  * Until the list has loaded, the browser's date is the best available guess.
  */
 export function useBusinessToday(): string {
-  const { data } = useCustomers();
+  const { data } = useCustomers({ poll: false });
   return data?.asOf ?? todayISO();
+}
+
+/** The time zone the books are kept in, for showing a timestamp on the day the books say it happened. */
+export function useBusinessTimeZone(): string {
+  const { data } = useCustomers({ poll: false });
+  return data?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
 }
 
 export function useCustomerDetail(id: string | null) {
@@ -39,14 +51,20 @@ export function useCustomerDetail(id: string | null) {
   });
 }
 
-/** After any write, every view that could show the change is refetched, whether the write worked or not. */
+/**
+ * After any write, every view that could show the change is refetched, whether the write worked or not.
+ *
+ * The refresh runs in the background: it is NOT returned to the mutation, which would keep "Saving..." on screen for the
+ * extra round trips of the refetch after the save itself had already succeeded.
+ */
 function useRefreshAll() {
   const client = useQueryClient();
-  return () =>
-    Promise.all([
+  return () => {
+    void Promise.all([
       client.invalidateQueries({ queryKey: ["customers"] }),
       client.invalidateQueries({ queryKey: ["customer"] }),
     ]);
+  };
 }
 
 const customerPath = (id: string) => `/api/customers/${encodeURIComponent(id)}`;

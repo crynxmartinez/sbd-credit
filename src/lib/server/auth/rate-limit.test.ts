@@ -32,6 +32,19 @@ describe("createRateLimiter", () => {
     expect(limiter.take("k")).toBe(false);
   });
 
+  test("when full of LIVE keys it drops the oldest one rather than refusing to track a new address", () => {
+    let now = 0;
+    const limiter = createRateLimiter({ limit: 1, windowMs: 1_000, now: () => now, maxKeys: 2 });
+    limiter.take("oldest");
+    now = 10;
+    limiter.take("newer");
+    now = 20;
+    expect(limiter.take("brand-new")).toBe(true); // tracked, even though both existing keys are still live
+    expect(limiter.size()).toBe(2);
+    expect(limiter.take("oldest")).toBe(true); // it was forgotten, so it gets a fresh allowance
+    expect(limiter.take("brand-new")).toBe(false); // the newer entries are still remembered
+  });
+
   test("forgets idle keys so memory cannot grow without bound", () => {
     let now = 0;
     const limiter = createRateLimiter({ limit: 1, windowMs: 100, now: () => now, maxKeys: 3 });

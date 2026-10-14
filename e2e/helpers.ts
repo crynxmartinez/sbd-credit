@@ -29,7 +29,9 @@ export async function signIn(page: Page, who: { username: string; password: stri
 export const alertWith = (scope: Page | Locator, text: string | RegExp) => scope.getByRole("alert").filter({ hasText: text });
 
 /** A status message containing this text (the toast area, the result counter and Next's own announcer all use role="status"). */
-export const statusWith = (scope: Page | Locator, text: string | RegExp) => scope.getByRole("status").filter({ hasText: text });
+// A message is also written into a hidden live region inside an open dialog (for screen readers): that copy is not the one to look at.
+export const statusWith = (scope: Page | Locator, text: string | RegExp) =>
+  scope.locator('[role="status"]:not([data-toast-live])').filter({ hasText: text });
 
 export async function newSession(browser: Browser, who: { username: string; password: string }): Promise<{ context: BrowserContext; page: Page }> {
   const context = await browser.newContext();

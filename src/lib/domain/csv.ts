@@ -5,10 +5,12 @@
  */
 const FORMULA_TRIGGERS = /^[=+\-@\t\r]/;
 const PLAIN_NUMBER = /^-?\d+(\.\d+)?$/;
+/** "+1 (555) 201-4410": a plus, then at least seven digits, spaces and phone punctuation only. It cannot call anything, and defusing it would alter the data. A bare "+1" is still defused. */
+const PLAIN_PHONE = /^\+\d[\d\s().-]{6,}$/;
 
 function cell(value: string | number | null | undefined): string {
   let text = value === null || value === undefined ? "" : String(value);
-  if (typeof value === "string" && FORMULA_TRIGGERS.test(text) && !PLAIN_NUMBER.test(text)) text = `'${text}`;
+  if (typeof value === "string" && FORMULA_TRIGGERS.test(text) && !PLAIN_NUMBER.test(text) && !PLAIN_PHONE.test(text)) text = `'${text}`;
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 

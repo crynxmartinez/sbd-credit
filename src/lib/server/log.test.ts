@@ -88,3 +88,46 @@ describe("newErrorId", () => {
     expect(newErrorId()).not.toBe(newErrorId());
   });
 });
+
+describe("formatLogLine never throws", () => {
+  test("a circular structure is logged with the cycle marked, not crashed on", () => {
+    const loop: Record<string, unknown> = { name: "loop" };
+    loop.self = loop;
+    const line = parse(formatLogLine("error", "x", { loop }, NOW));
+    expect(line.event).toBe("x");
+    expect(JSON.stringify(line)).toContain("loop");
+  });
+
+  test("a BigInt (a database count) is written as text", () => {
+    expect(parse(formatLogLine("info", "x", { total: BigInt("12345678901234567890") }, NOW)).total).toBe("12345678901234567890");
+  });
+
+  test("a Date is written as an ISO time, not an empty object", () => {
+    expect(parse(formatLogLine("info", "x", { at: new Date("2026-10-14T01:02:03Z") }, NOW)).at).toBe("2026-10-14T01:02:03.000Z");
+  });
+
+  test("a value that cannot be written at all still yields a valid line that says so", () => {
+    const hostile = { toJSON: () => { throw new Error("nope"); } };
+    const line = parse(formatLogLine("error", "x", { hostile }, NOW));
+    expect(line).toMatchObject({ level: "error", event: "x" });
+  });
+});
+
+describe("describeError for database errors", () => {
+  test("keeps the Prisma code, the cause and the SQLSTATE, which are what a person needs to diagnose it", () => {
+    const error = Object.assign(new Error("Invalid prisma.x.findMany() invocation:\nSomething about \"user@example.com\"\nmore detail"), {
+      code: "P2010",
+      meta: { code: "23505", target: ["email"] },
+      cause: new Error("deep cause"),
+    });
+    const described = describeError(error);
+    expect(described).toMatchObject({ code: "P2010", sqlstate: "23505" });
+    expect(String(described.cause)).toContain("deep cause");
+  });
+
+  test("a Prisma message (which can quote row values such as an email) is cut to its first line", () => {
+    const error = Object.assign(new Error("Invalid invocation:\nUnique constraint failed on the fields: (`email`) with value dana@example.com"), { code: "P2002", name: "PrismaClientKnownRequestError" });
+    const described = describeError(error);
+    expect(JSON.stringify(described.message)).not.toContain("dana@example.com");
+  });
+});

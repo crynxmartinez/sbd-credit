@@ -15,6 +15,8 @@ export async function register() {
   const problems = validateEnvironment(process.env);
   if (problems.length === 0) {
     log("info", "startup.ok", { environment: process.env.NODE_ENV });
+    const { warmUp } = await import("@/lib/server/warm-up");
+    void warmUp();
     return;
   }
   log("error", "startup.invalid_environment", { problems });

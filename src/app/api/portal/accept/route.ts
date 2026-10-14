@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { z } from "zod";
-import { clientAddress, trustedHopsFromEnv } from "@/lib/server/auth/client-address";
+import { addressBucket, clientAddress, trustedHopsFromEnv } from "@/lib/server/auth/client-address";
+import { attemptLimit } from "@/lib/server/auth/limits";
 import { createRateLimiter } from "@/lib/server/auth/rate-limit";
 import { ApiError, assertSameOrigin, ok, readJson, route } from "@/lib/server/http";
 import { acceptInvite } from "@/lib/server/services/portal-access";
@@ -12,13 +13,16 @@ const acceptSchema = z.object({
 });
 
 /** Per client address. A token cannot be guessed, but this still caps the cost of the hashing each valid-looking try causes. */
-const limiter = createRateLimiter({ limit: 20, windowMs: 10 * 60_000 });
+const limiter = createRateLimiter({
+  limit: attemptLimit(process.env.ACCEPT_ATTEMPTS_PER_ADDRESS, 20, process.env.NODE_ENV === "production"),
+  windowMs: 10 * 60_000,
+});
 const TRUSTED_HOPS = trustedHopsFromEnv(process.env.TRUSTED_PROXY_HOPS);
 
 export function POST(request: NextRequest) {
   return route(async () => {
     assertSameOrigin(request);
-    if (!limiter.take(clientAddress(request.headers, TRUSTED_HOPS))) {
+    if (!limiter.take(addressBucket(clientAddress(request.headers, TRUSTED_HOPS)))) {
       throw new ApiError(429, "rate_limited", "Too many attempts. Please wait a few minutes and try again.");
     }
     const { token, password } = await readJson(request, acceptSchema);
