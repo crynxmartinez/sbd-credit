@@ -38,6 +38,9 @@ Own app, same Postgres database server as the Storage Materials shipper app.
   carries a request key, so a retried request is recorded once.
 - "Today" is the business day (`BUSINESS_TIME_ZONE`), decided by the server and returned with the data. The browser never sends a date for this.
 - Balance is never stored: it is the sum of ledger entries. Ledger and audit rows are append-only; mistakes are voided, not edited.
+- Ledger types: CHARGE adds; PAYMENT and WRITE_OFF reduce; ADJUSTMENT and REVERSAL are signed. `effectOnBalance()` in `domain/ledger.ts` is the one place that knows the sign. The SQL in `services/ledger.ts` mirrors it, so change both together.
+- A void is only for the current business month. Older entries are corrected by a reversal dated today (`reverseEntry`). A reversal is never posted directly, never reversed, and never voided; a reversed entry is never voided.
+- A write-off and a reversal always carry a reason (also a CHECK constraint). Write-offs and reversals are ADMIN actions.
 - Dates are local calendar dates (`YYYY-MM-DD`), never `toISOString().slice(0, 10)`.
 - Roles follow the shipper app: EMPLOYEE | ADMIN | SUPERADMIN. Approve, deny, suspend and limit changes need ADMIN or above.
 

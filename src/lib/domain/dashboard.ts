@@ -28,6 +28,7 @@ export function buildDashboard(customers: readonly CustomerSummary[], asOf: stri
       totalExtendedCents: approved.reduce((sum, c) => sum + c.creditLimitCents, 0),
       totalOutstandingCents: customers.reduce((sum, c) => sum + Math.max(0, c.balanceCents), 0),
       totalOverdueCents: customers.reduce((sum, c) => sum + c.overdueCents, 0),
+      totalWrittenOffCents: customers.reduce((sum, c) => sum + c.writtenOffCents, 0),
       needsAttention: alerts.length,
     },
     alerts,

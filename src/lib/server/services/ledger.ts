@@ -1,11 +1,12 @@
 import "server-only";
 import { Prisma } from "@/generated/prisma/client";
 import type { LedgerType } from "@/lib/domain/constants";
-import { dueDateFor, isoToDbDate } from "@/lib/domain/dates";
+import { dbDateToIso, dueDateFor, isInClosedMonth, isoToDbDate } from "@/lib/domain/dates";
+import { effectOnBalance, reversalFor } from "@/lib/domain/ledger";
 import { formatCents } from "@/lib/domain/money";
-import { can } from "@/lib/domain/roles";
+import { can, type Action } from "@/lib/domain/roles";
 import type { SessionUser } from "@/lib/types";
-import type { LedgerEntryInput } from "@/lib/validation";
+import type { LedgerEntryInput, ReversalInput } from "@/lib/validation";
 import { businessToday } from "../as-of";
 import { ApiError } from "../http";
 import { transaction } from "../tx";
@@ -25,13 +26,27 @@ const VERB: Readonly<Record<LedgerType, string>> = {
   CHARGE: "Charge added",
   PAYMENT: "Payment received",
   ADJUSTMENT: "Adjustment",
+  WRITE_OFF: "Written off",
+  REVERSAL: "Reversal",
 };
-const NOUN: Readonly<Record<LedgerType, string>> = { CHARGE: "charge", PAYMENT: "payment", ADJUSTMENT: "adjustment" };
+const NOUN: Readonly<Record<LedgerType, string>> = {
+  CHARGE: "charge",
+  PAYMENT: "payment",
+  ADJUSTMENT: "adjustment",
+  WRITE_OFF: "write-off",
+  REVERSAL: "reversal",
+};
 
-/** "$50.00", or "+$50.00" / "−$50.00" for an adjustment, where the direction is the point. */
+/** The role needed to post each type directly. Types missing here need only the ability to record entries. */
+const POST_PERMISSION: Partial<Record<LedgerType, { action: Action; message: string }>> = {
+  ADJUSTMENT: { action: "ledger.adjust", message: "Only an admin can post an adjustment." },
+  WRITE_OFF: { action: "ledger.write_off", message: "Only an admin can write off a balance." },
+};
+
+/** "$50.00", or "+$50.00" / "−$50.00" where the direction is the point (an adjustment or a reversal). */
 function describeAmount(type: LedgerType, amountCents: number): string {
   const money = formatCents(Math.abs(amountCents), { fixed: true });
-  if (type !== "ADJUSTMENT") return money;
+  if (type !== "ADJUSTMENT" && type !== "REVERSAL") return money;
   return `${amountCents < 0 ? "−" : "+"}${money}`;
 }
 
@@ -69,18 +84,35 @@ async function lockCustomer(tx: Prisma.TransactionClient, customerId: string, re
 }
 
 /** The balance and the number of live entries, summed by the database so the whole ledger never travels to Node. */
-async function balanceOf(tx: Prisma.TransactionClient, customerId: string): Promise<{ balanceCents: number; entries: number }> {
+async function balanceOf(
+  tx: Prisma.TransactionClient,
+  customerId: string,
+  /** Only count entries dated on or before this day. Without it every live entry counts, post-dated ones included. */
+  throughDate?: string,
+): Promise<{ balanceCents: number; entries: number }> {
   const [row] = await tx.$queryRaw<{ total: bigint; entries: number }[]>`
-    SELECT COALESCE(SUM(CASE WHEN "type" = 'PAYMENT' THEN -"amountCents" ELSE "amountCents" END), 0)::bigint AS total,
+    SELECT COALESCE(SUM(CASE WHEN "type" IN ('PAYMENT', 'WRITE_OFF') THEN -"amountCents" ELSE "amountCents" END), 0)::bigint AS total,
            COUNT(*)::int AS entries
-    FROM "LedgerEntry" WHERE "customerId" = ${customerId} AND "voidedAt" IS NULL`;
+    FROM "LedgerEntry" WHERE "customerId" = ${customerId} AND "voidedAt" IS NULL
+    ${throughDate ? Prisma.sql`AND "entryDate" <= ${isoToDbDate(throughDate)}` : Prisma.empty}`;
   return { balanceCents: Number(row?.total ?? BigInt(0)), entries: row?.entries ?? 0 };
 }
 
-export async function recordEntry(customerId: string, input: LedgerEntryInput, actor: SessionUser): Promise<RecordResult> {
-  if (input.type === "ADJUSTMENT" && !can(actor.role, "ledger.adjust")) {
-    throw new ApiError(403, "forbidden", "Only an admin can post an adjustment.");
+/** A write-off gives up on money that is owed, so it cannot be dated ahead, and cannot exceed what is owed that day. */
+async function assertWritableOff(tx: Prisma.TransactionClient, customerId: string, input: LedgerEntryInput): Promise<void> {
+  if (input.entryDate > businessToday()) {
+    throw new ApiError(422, "invalid_entry", "A write-off cannot be dated in the future.");
   }
+  const { balanceCents: owed } = await balanceOf(tx, customerId, input.entryDate);
+  if (owed <= 0) throw new ApiError(409, "nothing_owed", "Nothing is owed as of that date, so there is nothing to write off.");
+  if (input.amountCents > owed) {
+    throw new ApiError(409, "exceeds_balance", `You can write off at most ${formatCents(owed, { fixed: true })}, which is what is owed.`);
+  }
+}
+
+export async function recordEntry(customerId: string, input: LedgerEntryInput, actor: SessionUser): Promise<RecordResult> {
+  const permission = POST_PERMISSION[input.type];
+  if (permission && !can(actor.role, permission.action)) throw new ApiError(403, "forbidden", permission.message);
 
   return transaction(async (tx) => {
     const customer = await lockCustomer(tx, customerId, input.type === "CHARGE" ? "approved" : undefined);
@@ -97,8 +129,11 @@ export async function recordEntry(customerId: string, input: LedgerEntryInput, a
     const { balanceCents: before, entries } = await balanceOf(tx, customerId);
     if (input.type !== "CHARGE") assertCanTakePayment(customer.status, entries > 0);
 
-    const after = before + (input.type === "PAYMENT" ? -input.amountCents : input.amountCents);
-    const dueDate = input.type === "PAYMENT" ? null : (input.dueDate ?? dueDateFor(input.entryDate, customer.paymentTerms));
+    if (input.type === "WRITE_OFF") await assertWritableOff(tx, customerId, input);
+
+    const after = before + effectOnBalance(input.type, input.amountCents);
+    const keepsDueDate = input.type === "CHARGE" || input.type === "ADJUSTMENT";
+    const dueDate = keepsDueDate ? (input.dueDate ?? dueDateFor(input.entryDate, customer.paymentTerms)) : null;
 
     let warning: LedgerWarning = null;
     if (input.type === "PAYMENT" && after < 0) warning = "overpayment";
@@ -121,12 +156,97 @@ export async function recordEntry(customerId: string, input: LedgerEntryInput, a
     await writeAudit(tx, {
       customerId,
       action: `ledger.${input.type.toLowerCase()}`,
-      summary: `${VERB[input.type]} — ${withReference(describeAmount(input.type, input.amountCents), input.reference)}`,
+      summary: [`${VERB[input.type]} — ${withReference(describeAmount(input.type, input.amountCents), input.reference)}`, input.type === "WRITE_OFF" ? input.note : null]
+        .filter(Boolean)
+        .join(" — "),
       actor: actor.name,
       actorId: actor.id,
       ledgerEntryId: created.id,
     });
     return { id: created.id, warning, duplicate: false, postDated: input.entryDate > businessToday() };
+  });
+}
+
+/**
+ * A void takes an entry out of the books as if it never happened, which is right for a typo in the current month and
+ * wrong for anything already reported: that is corrected with a reversal dated today instead.
+ */
+async function assertVoidable(tx: Prisma.TransactionClient, entry: { id: string; type: string; entryDate: Date }): Promise<void> {
+  if (entry.type === "REVERSAL") {
+    throw new ApiError(409, "not_voidable", "A reversal cannot be voided. Record the original entry again instead.");
+  }
+  const reversal = await tx.ledgerEntry.findUnique({ where: { reversesEntryId: entry.id }, select: { id: true } });
+  if (reversal) {
+    throw new ApiError(409, "already_reversed", "That entry has been reversed, so it cannot also be voided.");
+  }
+  if (isInClosedMonth(dbDateToIso(entry.entryDate) ?? "", businessToday())) {
+    throw new ApiError(409, "closed_month", "That entry is from a month that is already closed. Reverse it instead: that records a correction dated today and leaves the past month as it was.");
+  }
+}
+
+export interface ReverseResult {
+  id: string;
+  /** True when this request had already been recorded (a retry), so nothing new was added. */
+  duplicate: boolean;
+}
+
+/**
+ * Cancels an earlier entry with a new, opposite one dated today (never earlier than the entry itself). The original is
+ * left untouched, so figures already reported for its month stay true. An entry can be reversed once.
+ */
+export async function reverseEntry(customerId: string, entryId: string, input: ReversalInput, actor: SessionUser): Promise<ReverseResult> {
+  if (!can(actor.role, "ledger.reverse")) throw new ApiError(403, "forbidden", "Only an admin can reverse an entry.");
+
+  return transaction(async (tx) => {
+    await lockCustomer(tx, customerId);
+
+    if (input.requestKey) {
+      const earlier = await tx.ledgerEntry.findUnique({
+        where: { customerId_requestKey: { customerId, requestKey: input.requestKey } },
+        select: { id: true },
+      });
+      if (earlier) return { id: earlier.id, duplicate: true };
+    }
+
+    const original = await tx.ledgerEntry.findFirst({ where: { id: entryId, customerId } });
+    if (!original) throw new ApiError(404, "not_found", "That entry no longer exists.");
+    if (original.voidedAt) throw new ApiError(409, "already_voided", "That entry was voided, so it has no effect to reverse.");
+
+    const type = original.type as LedgerType;
+    const offset = reversalFor({ type, amountCents: original.amountCents, entryDate: dbDateToIso(original.entryDate) ?? "" }, businessToday());
+    if (!offset) throw new ApiError(409, "not_reversible", "A reversal cannot be reversed. Record the original entry again instead.");
+
+    const already = await tx.ledgerEntry.findUnique({ where: { reversesEntryId: entryId }, select: { id: true, createdById: true, note: true } });
+    if (already) {
+      // The same person reversing it again for the same reason is a retry of a request that already succeeded.
+      if (already.createdById === actor.id && already.note === input.reason) return { id: already.id, duplicate: true };
+      throw new ApiError(409, "already_reversed", "That entry has already been reversed.");
+    }
+
+    const created = await tx.ledgerEntry.create({
+      data: {
+        customerId,
+        type: "REVERSAL",
+        amountCents: offset.amountCents,
+        entryDate: isoToDbDate(offset.entryDate),
+        dueDate: null,
+        reference: original.reference,
+        note: input.reason,
+        createdBy: actor.name,
+        createdById: actor.id,
+        requestKey: input.requestKey ?? null,
+        reversesEntryId: entryId,
+      },
+    });
+    await writeAudit(tx, {
+      customerId,
+      action: "ledger.reversal",
+      summary: `Reversed ${NOUN[type]} of ${withReference(describeAmount(type, original.amountCents), original.reference)} — ${input.reason}`,
+      actor: actor.name,
+      actorId: actor.id,
+      ledgerEntryId: created.id,
+    });
+    return { id: created.id, duplicate: false };
   });
 }
 
@@ -145,6 +265,7 @@ export async function voidEntry(customerId: string, entryId: string, reason: str
       if (entry.voidedById === actor.id && entry.voidReason === reason) return;
       throw new ApiError(409, "already_voided", "That entry has already been voided.");
     }
+    await assertVoidable(tx, entry);
 
     const type = entry.type as LedgerType;
     await tx.ledgerEntry.update({

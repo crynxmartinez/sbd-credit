@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MAX_AMOUNT_CENTS, PAYMENT_TERMS } from "./domain/constants";
+import { MAX_AMOUNT_CENTS, MIN_REASON_LENGTH, PAYMENT_TERMS, POSTABLE_LEDGER_TYPES } from "./domain/constants";
 import { isValidISODate } from "./domain/dates";
 
 /**
@@ -95,7 +95,7 @@ export const decisionSchema = z.discriminatedUnion("action", [
 
 export const ledgerEntrySchema = z
   .object({
-    type: z.enum(["CHARGE", "PAYMENT", "ADJUSTMENT"]),
+    type: z.enum(POSTABLE_LEDGER_TYPES),
     amountCents: z.number().int().min(-MAX_AMOUNT_CENTS).max(MAX_AMOUNT_CENTS),
     entryDate: isoDate,
     dueDate: isoDate.nullish(),
@@ -110,8 +110,11 @@ export const ledgerEntrySchema = z
     if (entry.type !== "ADJUSTMENT" && entry.amountCents <= 0) {
       ctx.addIssue({ code: "custom", path: ["amountCents"], message: "Enter an amount greater than 0." });
     }
-    if (entry.dueDate && entry.type === "PAYMENT") {
-      ctx.addIssue({ code: "custom", path: ["dueDate"], message: "A payment has no due date." });
+    if (entry.dueDate && (entry.type === "PAYMENT" || entry.type === "WRITE_OFF")) {
+      ctx.addIssue({ code: "custom", path: ["dueDate"], message: `A ${entry.type === "PAYMENT" ? "payment" : "write-off"} has no due date.` });
+    }
+    if (entry.type === "WRITE_OFF" && (entry.note ?? "").length < MIN_REASON_LENGTH) {
+      ctx.addIssue({ code: "custom", path: ["note"], message: "Say why this is being written off." });
     }
     if (entry.dueDate && entry.dueDate < entry.entryDate) {
       ctx.addIssue({ code: "custom", path: ["dueDate"], message: "The due date cannot be before the entry date." });
@@ -119,7 +122,12 @@ export const ledgerEntrySchema = z
   });
 
 export const voidSchema = z.object({
-  reason: z.string().trim().min(3, "Say why this entry is being voided.").max(500),
+  reason: z.string().trim().min(MIN_REASON_LENGTH, "Say why this entry is being voided.").max(500),
+});
+
+export const reversalSchema = z.object({
+  reason: z.string().trim().min(MIN_REASON_LENGTH, "Say why this entry is being reversed.").max(500),
+  requestKey,
 });
 
 export const loginSchema = z.object({
@@ -131,3 +139,4 @@ export type CustomerCreateInput = z.output<typeof customerCreateSchema>;
 export type CustomerUpdateInput = z.output<typeof customerUpdateSchema>;
 export type DecisionInput = z.output<typeof decisionSchema>;
 export type LedgerEntryInput = z.output<typeof ledgerEntrySchema>;
+export type ReversalInput = z.output<typeof reversalSchema>;

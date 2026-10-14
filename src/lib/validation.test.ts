@@ -5,6 +5,7 @@ import {
   decisionSchema,
   ledgerEntrySchema,
   loginSchema,
+  reversalSchema,
   voidSchema,
 } from "./validation";
 
@@ -106,9 +107,31 @@ describe("ledgerEntrySchema", () => {
     ).toBe(true);
   });
 
+  test("a write-off is positive and must say why", () => {
+    const writeOff = { ...base, type: "WRITE_OFF", amountCents: 500 };
+    expect(ledgerEntrySchema.safeParse({ ...writeOff, note: "Customer closed, uncollectible" }).success).toBe(true);
+    expect(ledgerEntrySchema.safeParse(writeOff).success).toBe(false);
+    expect(ledgerEntrySchema.safeParse({ ...writeOff, note: "  ok " }).success).toBe(false);
+    expect(ledgerEntrySchema.safeParse({ ...writeOff, amountCents: -500, note: "Customer closed" }).success).toBe(false);
+    expect(ledgerEntrySchema.safeParse({ ...writeOff, dueDate: "2026-11-01", note: "Customer closed" }).success).toBe(false);
+  });
+
+  test("a reversal cannot be posted directly: it only comes from reversing an entry", () => {
+    expect(ledgerEntrySchema.safeParse({ ...base, type: "REVERSAL", amountCents: 500, note: "Because" }).success).toBe(false);
+  });
+
   test("rejects fractional cents and unknown types", () => {
     expect(ledgerEntrySchema.safeParse({ ...base, type: "CHARGE", amountCents: 10.5 }).success).toBe(false);
     expect(ledgerEntrySchema.safeParse({ ...base, type: "REFUND", amountCents: 10 }).success).toBe(false);
+  });
+});
+
+describe("reversalSchema", () => {
+  test("needs a real reason, and an optional request key that must be a uuid", () => {
+    expect(reversalSchema.safeParse({ reason: "  " }).success).toBe(false);
+    expect(reversalSchema.safeParse({ reason: "Check bounced" }).success).toBe(true);
+    expect(reversalSchema.safeParse({ reason: "Check bounced", requestKey: "not-a-uuid" }).success).toBe(false);
+    expect(reversalSchema.safeParse({ reason: "Check bounced", requestKey: crypto.randomUUID() }).success).toBe(true);
   });
 });
 

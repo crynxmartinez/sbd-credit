@@ -43,7 +43,7 @@ export async function listSummaries(asOf: string): Promise<CustomerSummary[]> {
     // Voided entries never affect a balance or an aging bucket, so there is no reason to read them here.
     prisma.ledgerEntry.findMany({
       where: { voidedAt: null },
-      select: { id: true, customerId: true, type: true, amountCents: true, entryDate: true, dueDate: true, voidedAt: true },
+      select: { id: true, customerId: true, type: true, amountCents: true, entryDate: true, dueDate: true, voidedAt: true, reversesEntryId: true },
     }),
   ]);
 
@@ -60,7 +60,7 @@ export async function getDetail(id: string, asOf: string): Promise<CustomerDetai
   const row = await prisma.customer.findUnique({
     where: { id },
     include: {
-      ledger: { orderBy: [{ entryDate: "desc" }, { createdAt: "desc" }] },
+      ledger: { include: { reversedBy: { select: { id: true } } }, orderBy: [{ entryDate: "desc" }, { createdAt: "desc" }, { id: "desc" }] },
       // The id breaks ties between events written in the same millisecond, so history never reshuffles between loads.
       audit: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: AUDIT_HISTORY_LIMIT },
     },

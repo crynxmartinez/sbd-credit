@@ -8,6 +8,8 @@ export type Action =
   | "ledger.record"
   | "ledger.void"
   | "ledger.adjust"
+  | "ledger.write_off"
+  | "ledger.reverse"
   | "decision.start_review"
   | "decision.approve"
   | "decision.deny"
@@ -24,6 +26,8 @@ const MINIMUM_ROLE: Readonly<Record<Action, Role>> = {
   "ledger.record": "EMPLOYEE",
   "ledger.void": "ADMIN",
   "ledger.adjust": "ADMIN",
+  "ledger.write_off": "ADMIN",
+  "ledger.reverse": "ADMIN",
   "decision.start_review": "EMPLOYEE",
   "decision.approve": "ADMIN",
   "decision.deny": "ADMIN",

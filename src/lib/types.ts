@@ -40,6 +40,8 @@ export interface CustomerMetrics {
   nextDueDate: string | null;
   nextDueCents: number;
   buckets: Record<AgingBucket, number>;
+  /** Debt given up on, as of the business day. Already out of the balance; shown so it is not forgotten. */
+  writtenOffCents: number;
 }
 
 export type CustomerSummary = CustomerBase & CustomerMetrics;
@@ -58,6 +60,10 @@ export interface LedgerEntryDto {
   voidedAt: string | null;
   voidedBy: string | null;
   voidReason: string | null;
+  /** For a reversal, the entry it offsets. */
+  reversesId: string | null;
+  /** True once a reversal has been recorded against this entry. */
+  reversed: boolean;
 }
 
 export interface AuditEventDto {
@@ -89,6 +95,7 @@ export interface DashboardStats {
   totalExtendedCents: number;
   totalOutstandingCents: number;
   totalOverdueCents: number;
+  totalWrittenOffCents: number;
   needsAttention: number;
 }
 

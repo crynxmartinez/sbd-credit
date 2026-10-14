@@ -38,6 +38,14 @@ export function isValidISODate(value: string): boolean {
   return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }
 
+/**
+ * True when `entryDate` falls in a calendar month before the one `today` is in. Past months are closed: whatever was
+ * reported for them stays as it was, so a correction is made as a new entry dated today instead of by erasing one.
+ */
+export function isInClosedMonth(entryDate: string, today: string): boolean {
+  return entryDate.slice(0, 7) < today.slice(0, 7);
+}
+
 export function addDays(iso: string, days: number): string {
   return fromUtcMs(utcMs(iso) + days * MS_PER_DAY);
 }

@@ -55,8 +55,9 @@ test.describe("signing in and out", () => {
     await page.goto("/customers");
     await expect(page.getByRole("button", { name: "New credit application" })).toBeVisible();
     await context.clearCookies();
-    // Opening the form refreshes the data, which is how the app learns the session has ended.
-    await page.getByRole("button", { name: "New credit application" }).click();
+    // Opening the form refreshes the data, which is how the app learns the session has ended. The background refresh can
+    // learn it first and leave the page before this click lands; either order must end at sign-in.
+    await page.getByRole("button", { name: "New credit application" }).click({ timeout: 5_000 }).catch(() => undefined);
 
     await expect(page).toHaveURL(/\/login\?next=%2Fcustomers/);
   });

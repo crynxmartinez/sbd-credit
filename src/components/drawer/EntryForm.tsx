@@ -3,24 +3,27 @@
 import { useState, type FormEvent } from "react";
 import { ApiClientError } from "@/lib/client/api";
 import { useBusinessToday, useRecordEntry } from "@/lib/client/queries";
-import { parseMoneyToCents } from "@/lib/domain/money";
+import { formatCents, parseMoneyToCents } from "@/lib/domain/money";
 import { ledgerEntrySchema } from "@/lib/validation";
 import { useAutoFocus } from "../useAutoFocus";
 import { useToast } from "../Toast";
 
-export type EntryKind = "payment" | "charge" | "adjustment";
+export type EntryKind = "payment" | "charge" | "adjustment" | "writeoff";
 
-const TYPE_OF = { payment: "PAYMENT", charge: "CHARGE", adjustment: "ADJUSTMENT" } as const;
-const TITLE = { payment: "Record payment", charge: "Add charge", adjustment: "Post adjustment" } as const;
+const TYPE_OF = { payment: "PAYMENT", charge: "CHARGE", adjustment: "ADJUSTMENT", writeoff: "WRITE_OFF" } as const;
+const TITLE = { payment: "Record payment", charge: "Add charge", adjustment: "Post adjustment", writeoff: "Write off" } as const;
+const DONE = { payment: "Payment recorded.", charge: "Charge added.", adjustment: "Adjustment posted.", writeoff: "Written off." } as const;
 
 interface Props {
   customerId: string;
   kind: EntryKind;
   paymentTerms: string;
+  /** What the customer owes now. A write-off cannot exceed it. */
+  owedCents: number;
   onDone: () => void;
 }
 
-export function EntryForm({ customerId, kind, paymentTerms, onDone }: Props) {
+export function EntryForm({ customerId, kind, paymentTerms, owedCents, onDone }: Props) {
   const notify = useToast();
   const record = useRecordEntry(customerId);
   const [amount, setAmount] = useState("");
@@ -40,6 +43,9 @@ export function EntryForm({ customerId, kind, paymentTerms, onDone }: Props) {
     setError(null);
     const cents = parseMoneyToCents(amount, { allowNegative: kind === "adjustment" });
     if (cents === null) return setError("Enter an amount in dollars, like 1250 or 1250.75.");
+    if (kind === "writeoff" && cents > owedCents) {
+      return setError(`You can write off at most ${formatCents(owedCents, { fixed: true })}, which is what is owed.`);
+    }
 
     const parsed = ledgerEntrySchema.safeParse({
       type: TYPE_OF[kind],
@@ -58,7 +64,7 @@ export function EntryForm({ customerId, kind, paymentTerms, onDone }: Props) {
       else if (postDated) notify("Recorded. It is dated in the future, so it will not count toward the balance until that day.");
       else if (warning === "over_limit") notify("Charge recorded. This account is now over its credit limit.", "err");
       else if (warning === "overpayment") notify("Payment recorded. The account now has a credit balance.");
-      else notify(kind === "payment" ? "Payment recorded." : kind === "charge" ? "Charge added." : "Adjustment posted.");
+      else notify(DONE[kind]);
       onDone();
     } catch (caught) {
       setError(caught instanceof ApiClientError ? caught.message : "Could not save. Please try again.");
@@ -75,11 +81,16 @@ export function EntryForm({ customerId, kind, paymentTerms, onDone }: Props) {
       <div className="row">
         <div className="col">
           <label htmlFor={`${id}-amount`}>{kind === "adjustment" ? "Amount ($, negative to reduce)" : "Amount ($)"}</label>
-          <input id={`${id}-amount`} type="text" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} data-autofocus />
+          <input id={`${id}-amount`} type="text" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} data-autofocus aria-describedby={kind === "writeoff" ? `${id}-owed` : undefined} />
+          {kind === "writeoff" ? (
+            <span className="field-hint" id={`${id}-owed`}>
+              Up to {formatCents(owedCents, { fixed: true })}, which is what is owed.
+            </span>
+          ) : null}
         </div>
         <div className="col">
           <label htmlFor={`${id}-date`}>Date</label>
-          <input id={`${id}-date`} type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} aria-describedby={entryDate > today ? `${id}-future` : undefined} />
+          <input id={`${id}-date`} type="date" value={entryDate} max={kind === "writeoff" ? today : undefined} onChange={(e) => setEntryDate(e.target.value)} aria-describedby={entryDate > today ? `${id}-future` : undefined} />
           {entryDate > today ? (
             <span className="field-hint" id={`${id}-future`}>
               After today: it will not count toward the balance until that day.
@@ -87,7 +98,7 @@ export function EntryForm({ customerId, kind, paymentTerms, onDone }: Props) {
           ) : null}
         </div>
       </div>
-      {kind !== "payment" ? (
+      {kind === "charge" || kind === "adjustment" ? (
         <div className="col">
           <label htmlFor={`${id}-due`}>Due date (blank uses {paymentTerms})</label>
           <input id={`${id}-due`} type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
@@ -99,7 +110,7 @@ export function EntryForm({ customerId, kind, paymentTerms, onDone }: Props) {
           <input id={`${id}-ref`} type="text" value={reference} onChange={(e) => setReference(e.target.value)} />
         </div>
         <div className="col">
-          <label htmlFor={`${id}-note`}>Note</label>
+          <label htmlFor={`${id}-note`}>{kind === "writeoff" ? "Reason (required)" : "Note"}</label>
           <input id={`${id}-note`} type="text" value={note} onChange={(e) => setNote(e.target.value)} />
         </div>
       </div>

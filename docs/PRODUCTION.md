@@ -9,7 +9,7 @@ with access to the database server or hosting account; the app cannot do them fo
 | --- | --- |
 | **Which system is the record of what customers owe: this app or the accounting software?** | Entering the same charges and payments by hand in two places always drifts. Pick one as the source and treat the other as a mirror. |
 | **Who may see customer credit?** | Access is granted by creating an account (`npm run user -- create`). A warehouse worker who can use the shipper app should not automatically see credit. |
-| **Can a void be undone after the month is closed?** | Today a void rewrites history: voiding a March charge in May changes March's balance. If statements are sent to customers, switch to dated reversal entries before the first statement goes out. |
+| **Is the month-close rule right?** | A void is only allowed for entries in the current calendar month of `BUSINESS_TIME_ZONE`; anything older is corrected with a **reversal** dated today, so figures already reported never change. On the 1st, last month's entries are already closed. If you want a grace period (say, three business days), it is one line in `assertVoidable` in `src/lib/server/services/ledger.ts`. |
 | **Time zone of the books** | `BUSINESS_TIME_ZONE` (default `America/Chicago`) decides what "today" means for overdue and aging. |
 
 ## 2. Database (Owner)

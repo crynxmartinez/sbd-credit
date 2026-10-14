@@ -1,6 +1,6 @@
 import type { CustomerBase, CustomerSummary } from "../types";
 import { utilizationLevel, utilizationPct } from "./alerts";
-import { computeAging, type LedgerRecord } from "./ledger";
+import { computeAging, writtenOffCents, type LedgerRecord } from "./ledger";
 
 /** A customer plus everything derived from their ledger as of one day. Pure: no database, no clock. */
 export function toSummary(customer: CustomerBase, entries: readonly LedgerRecord[], asOf: string): CustomerSummary {
@@ -19,5 +19,6 @@ export function toSummary(customer: CustomerBase, entries: readonly LedgerRecord
     nextDueDate: aging.nextDueDate,
     nextDueCents: aging.nextDueCents,
     buckets: aging.buckets,
+    writtenOffCents: writtenOffCents(entries, asOf),
   };
 }

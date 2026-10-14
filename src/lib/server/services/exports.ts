@@ -9,12 +9,12 @@ export async function customersCsv(asOf: string): Promise<string> {
   const customers = await listSummaries(asOf);
   const header = [
     "Business", "Contact", "Phone", "Email", "Status", "Date applied", "Credit limit", "Payment terms",
-    "Balance", "Overdue", "Next due date", "Next due amount", "Utilization %",
+    "Balance", "Overdue", "Next due date", "Next due amount", "Utilization %", "Written off",
   ];
   const rows = customers.map((c) => [
     c.businessName, c.contactName, c.phone, c.email, c.status, c.dateApplied, centsToDecimal(c.creditLimitCents),
     c.paymentTerms, centsToDecimal(c.balanceCents), centsToDecimal(c.overdueCents), c.nextDueDate,
-    centsToDecimal(c.nextDueCents), c.utilizationPct,
+    centsToDecimal(c.nextDueCents), c.utilizationPct, centsToDecimal(c.writtenOffCents),
   ]);
   return toCsv([header, ...rows]);
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { balanceCents, computeAging, type LedgerRecord } from "./ledger";
+import { balanceCents, computeAging, reversalFor, writtenOffCents, type LedgerRecord } from "./ledger";
 
 let counter = 0;
 function entry(overrides: Partial<LedgerRecord> & Pick<LedgerRecord, "type" | "amountCents">): LedgerRecord {
@@ -213,5 +213,130 @@ describe("computeAging", () => {
     const snapshot = JSON.stringify(entries);
     computeAging(entries, ASOF);
     expect(JSON.stringify(entries)).toBe(snapshot);
+  });
+});
+
+describe("write-offs", () => {
+  test("a write-off reduces the balance like a payment, without being a payment", () => {
+    const entries = [entry({ type: "CHARGE", amountCents: 100_00 }), entry({ type: "WRITE_OFF", amountCents: 40_00 })];
+    expect(balanceCents(entries)).toBe(60_00);
+  });
+
+  test("it settles the oldest charge first, so what is left keeps its true age", () => {
+    const entries = [
+      entry({ type: "CHARGE", amountCents: 100_00, entryDate: "2026-06-01", dueDate: "2026-07-01" }),
+      entry({ type: "CHARGE", amountCents: 50_00, entryDate: "2026-09-01", dueDate: "2026-10-01" }),
+      entry({ type: "WRITE_OFF", amountCents: 100_00, entryDate: "2026-10-01" }),
+    ];
+    const aging = computeAging(entries, ASOF);
+    expect(aging.balanceCents).toBe(50_00);
+    expect(aging.buckets.d1_30).toBe(50_00);
+    expect(aging.buckets.d90_plus).toBe(0);
+  });
+
+  test("a voided write-off puts the debt back", () => {
+    const entries = [entry({ type: "CHARGE", amountCents: 100_00 }), entry({ type: "WRITE_OFF", amountCents: 100_00, voided: true })];
+    expect(balanceCents(entries)).toBe(100_00);
+  });
+});
+
+describe("reversals", () => {
+  test("a reversal is signed: it cancels a charge, or re-opens a payment", () => {
+    const charge = entry({ type: "CHARGE", amountCents: 80_00 });
+    const reversalOfCharge = entry({ type: "REVERSAL", amountCents: -80_00, reverses: charge.id });
+    expect(balanceCents([charge, reversalOfCharge])).toBe(0);
+
+    const payment = entry({ type: "PAYMENT", amountCents: 30_00 });
+    const reversalOfPayment = entry({ type: "REVERSAL", amountCents: 30_00, reverses: payment.id });
+    expect(balanceCents([entry({ type: "CHARGE", amountCents: 100_00 }), payment, reversalOfPayment])).toBe(100_00);
+  });
+
+  test("a reversed payment (a bounced check) puts the invoice back with its ORIGINAL age, from the day it is reversed", () => {
+    const payment = entry({ type: "PAYMENT", amountCents: 100_00, entryDate: "2026-09-05" });
+    const entries = [
+      entry({ type: "CHARGE", amountCents: 100_00, entryDate: "2026-08-01", dueDate: "2026-08-31" }),
+      payment,
+      entry({ type: "REVERSAL", amountCents: 100_00, entryDate: "2026-10-10", reverses: payment.id }),
+    ];
+    const aging = computeAging(entries, ASOF);
+    expect(aging.balanceCents).toBe(100_00);
+    expect(aging.buckets.d31_60).toBe(100_00); // due Aug 31, so it is 43 days late, not "due today"
+    expect(aging.oldestOverdueDays).toBe(43);
+    // Before the reversal the account looked settled; that earlier view does not change.
+    expect(computeAging(entries, "2026-10-01")).toMatchObject({ balanceCents: 0, overdueCents: 0 });
+  });
+
+  test("a reversed charge disappears from aging exactly, instead of being taken off the oldest debt", () => {
+    const newer = entry({ type: "CHARGE", amountCents: 50_00, entryDate: "2026-10-05", dueDate: "2026-11-04" });
+    const entries = [
+      entry({ type: "CHARGE", amountCents: 100_00, entryDate: "2026-07-01", dueDate: "2026-07-31" }),
+      newer,
+      entry({ type: "REVERSAL", amountCents: -50_00, entryDate: "2026-10-10", reverses: newer.id }),
+    ];
+    const aging = computeAging(entries, ASOF);
+    expect(aging.balanceCents).toBe(100_00);
+    expect(aging.buckets.current).toBe(0);
+    expect(aging.buckets.d61_90).toBe(100_00);
+    expect(aging.nextDueDate).toBe("2026-07-31");
+  });
+
+  test("a reversal of a write-off restores the debt's original age too", () => {
+    const writeOff = entry({ type: "WRITE_OFF", amountCents: 100_00, entryDate: "2026-09-01" });
+    const entries = [
+      entry({ type: "CHARGE", amountCents: 100_00, entryDate: "2026-07-01", dueDate: "2026-07-31" }),
+      writeOff,
+      entry({ type: "REVERSAL", amountCents: 100_00, entryDate: "2026-10-10", reverses: writeOff.id }),
+    ];
+    expect(computeAging(entries, ASOF).buckets.d61_90).toBe(100_00);
+  });
+
+  test("a reversal that names nothing we can find is still counted by its sign", () => {
+    const entries = [
+      entry({ type: "CHARGE", amountCents: 100_00, entryDate: "2026-08-01", dueDate: "2026-08-31" }),
+      entry({ type: "REVERSAL", amountCents: -40_00, entryDate: "2026-10-10", reverses: "gone" }),
+    ];
+    expect(computeAging(entries, ASOF).balanceCents).toBe(60_00);
+  });
+});
+
+describe("reversalFor", () => {
+  const today = "2026-10-13";
+
+  test("offsets each kind of entry exactly", () => {
+    expect(reversalFor({ type: "CHARGE", amountCents: 80_00, entryDate: "2026-09-01" }, today)?.amountCents).toBe(-80_00);
+    expect(reversalFor({ type: "PAYMENT", amountCents: 80_00, entryDate: "2026-09-01" }, today)?.amountCents).toBe(80_00);
+    expect(reversalFor({ type: "WRITE_OFF", amountCents: 80_00, entryDate: "2026-09-01" }, today)?.amountCents).toBe(80_00);
+    expect(reversalFor({ type: "ADJUSTMENT", amountCents: 25_00, entryDate: "2026-09-01" }, today)?.amountCents).toBe(-25_00);
+    expect(reversalFor({ type: "ADJUSTMENT", amountCents: -25_00, entryDate: "2026-09-01" }, today)?.amountCents).toBe(25_00);
+  });
+
+  test("is dated today, never back in a closed month", () => {
+    expect(reversalFor({ type: "CHARGE", amountCents: 1, entryDate: "2026-03-01" }, today)?.entryDate).toBe(today);
+  });
+
+  test("is dated no earlier than the entry, so a future-dated entry is cancelled by something that also counts only then", () => {
+    expect(reversalFor({ type: "CHARGE", amountCents: 1, entryDate: "2026-11-01" }, today)?.entryDate).toBe("2026-11-01");
+  });
+
+  test("a reversal cannot itself be reversed", () => {
+    expect(reversalFor({ type: "REVERSAL", amountCents: 5, entryDate: "2026-10-01" }, today)).toBeNull();
+  });
+});
+
+describe("writtenOffCents", () => {
+  test("totals live write-offs, ignores voided and reversed ones, and honours the as-of day", () => {
+    const kept = entry({ type: "WRITE_OFF", amountCents: 10_00, entryDate: "2026-10-01" });
+    const reversed = entry({ type: "WRITE_OFF", amountCents: 20_00, entryDate: "2026-10-02" });
+    const entries = [
+      entry({ type: "CHARGE", amountCents: 500_00, entryDate: "2026-09-01" }),
+      kept,
+      reversed,
+      entry({ type: "REVERSAL", amountCents: 20_00, entryDate: "2026-10-05", reverses: reversed.id }),
+      entry({ type: "WRITE_OFF", amountCents: 40_00, entryDate: "2026-10-03", voided: true }),
+      entry({ type: "WRITE_OFF", amountCents: 60_00, entryDate: "2026-10-20" }),
+    ];
+    expect(writtenOffCents(entries, ASOF)).toBe(10_00);
+    expect(writtenOffCents(entries, "2026-10-20")).toBe(70_00);
+    expect(writtenOffCents(entries, "2026-10-03")).toBe(30_00);
   });
 });

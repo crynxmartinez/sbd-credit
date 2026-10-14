@@ -17,7 +17,7 @@ interface Props {
 export function CreditPanel({ customer, active, setActive }: Props) {
   const { user } = useUi();
   const approved = customer.status === "approved";
-  const entryKind = (["payment", "charge", "adjustment"] as const).find((kind) => kind === active) as EntryKind | undefined;
+  const entryKind = (["payment", "charge", "adjustment", "writeoff"] as const).find((kind) => kind === active) as EntryKind | undefined;
 
   return (
     <div>
@@ -48,6 +48,11 @@ export function CreditPanel({ customer, active, setActive }: Props) {
           <div className="kv-label">Next payment due</div>
           <div className="kv-value">{customer.nextDueDate ? `${formatDate(customer.nextDueDate)} · ${formatCents(customer.nextDueCents)}` : "—"}</div>
         </div>
+        {customer.writtenOffCents > 0 ? (
+          <div style={{ gridColumn: "1 / -1" }} className="kv-value">
+            Written off: <span className="mono">{formatCents(customer.writtenOffCents, { fixed: true })}</span>
+          </div>
+        ) : null}
         {customer.creditCents > 0 ? (
           <div style={{ gridColumn: "1 / -1" }} className="kv-value">
             Unapplied credit: <span className="mono">{formatCents(customer.creditCents, { fixed: true })}</span>
@@ -69,10 +74,22 @@ export function CreditPanel({ customer, active, setActive }: Props) {
               Adjustment
             </button>
           ) : null}
+          {can(user.role, "ledger.write_off") && customer.balanceCents > 0 ? (
+            <button type="button" className="btn btn-sm" onClick={() => setActive("writeoff")}>
+              Write off
+            </button>
+          ) : null}
         </div>
       ) : null}
       {entryKind ? (
-        <EntryForm key={entryKind} customerId={customer.id} kind={entryKind} paymentTerms={customer.paymentTerms} onDone={() => setActive(null)} />
+        <EntryForm
+          key={entryKind}
+          customerId={customer.id}
+          kind={entryKind}
+          paymentTerms={customer.paymentTerms}
+          owedCents={customer.balanceCents}
+          onDone={() => setActive(null)}
+        />
       ) : null}
     </div>
   );

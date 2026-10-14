@@ -78,6 +78,7 @@ th.num, td.num { text-align: right; }
 .ledger-amount { font-family: var(--font-mono); font-weight: 600; text-align: right; grid-row: 1; grid-column: 2; }
 .ledger-amount.pay { color: var(--green); }
 .ledger-item.voided .ledger-main, .ledger-item.voided .ledger-amount { text-decoration: line-through; opacity: 0.6; }
+.ledger-item.reversed .ledger-main, .ledger-item.reversed .ledger-amount { opacity: 0.6; }
 .ledger-actions { grid-column: 2; text-align: right; }
 .void-tag { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--red); margin-left: 6px; }
 .link-danger { background: none; border: none; color: var(--red); font-size: 12px; font-weight: 600; padding: 2px 0; }

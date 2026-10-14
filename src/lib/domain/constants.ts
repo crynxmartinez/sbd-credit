@@ -15,8 +15,19 @@ export const PAYMENT_TERMS = ["Net 15", "Net 30", "Net 45", "Net 60", "Net 90", 
 export type PaymentTerms = (typeof PAYMENT_TERMS)[number];
 export const DEFAULT_PAYMENT_TERMS: PaymentTerms = "Net 30";
 
-export const LEDGER_TYPES = ["CHARGE", "PAYMENT", "ADJUSTMENT"] as const;
+/**
+ * CHARGE adds to the balance; PAYMENT and WRITE_OFF reduce it (a write-off is debt given up on, not money received).
+ * ADJUSTMENT is a signed correction posted by hand. REVERSAL is the signed offset of an earlier entry, made by the
+ * system and dated today, so a correction never rewrites a past month.
+ */
+export const LEDGER_TYPES = ["CHARGE", "PAYMENT", "ADJUSTMENT", "WRITE_OFF", "REVERSAL"] as const;
 export type LedgerType = (typeof LEDGER_TYPES)[number];
+
+/** The types a person can post directly. A reversal is only ever made by reversing an existing entry. */
+export const POSTABLE_LEDGER_TYPES = ["CHARGE", "PAYMENT", "ADJUSTMENT", "WRITE_OFF"] as const;
+
+/** A write-off or reversal always carries the reason, because it changes what the books say without new money moving. */
+export const MIN_REASON_LENGTH = 3;
 
 /** A credit line at or above this share of its limit is flagged. */
 export const UTILIZATION_WARN_PCT = 80;

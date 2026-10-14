@@ -20,6 +20,7 @@ function StatCards({ stats }: { stats: DashboardDto["stats"] | undefined }) {
     { label: "Total credit extended", value: stats && formatCents(stats.totalExtendedCents) },
     { label: "Total outstanding balance", value: stats && formatCents(stats.totalOutstandingCents) },
     { label: "Past due", value: stats && formatCents(stats.totalOverdueCents), alert: (stats?.totalOverdueCents ?? 0) > 0 },
+    { label: "Written off", value: stats && formatCents(stats.totalWrittenOffCents) },
     { label: "Needs attention", value: stats?.needsAttention, alert: (stats?.needsAttention ?? 0) > 0 },
   ];
   return (

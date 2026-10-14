@@ -8,11 +8,11 @@ database.
 
 | Before | Now |
 | --- | --- |
-| One stored balance, overwritten on every payment | A **ledger**: charges, payments, adjustments. Balance is always computed, so two people recording payments at once cannot lose one |
+| One stored balance, overwritten on every payment | A **ledger**: charges, payments, adjustments, write-offs, reversals. Balance is always computed, so two people recording payments at once cannot lose one |
 | Whole dollars, floating-point math | **Integer cents** everywhere |
 | One hand-typed "next payment due" | Due dates per charge from the payment terms, payments applied oldest-first, **aging buckets** |
 | History array rewritten each time | **Append-only audit trail** with field-level before/after, written in the same transaction as the change |
-| Anyone could approve and edit anything | Roles: employees record activity; admins approve, deny, suspend, void and change credit terms |
+| Anyone could approve and edit anything | Roles: employees record activity; admins approve, deny, suspend, void, reverse, write off and change credit terms |
 | "Today" = UTC date (wrong in the US evening) | Local calendar dates throughout |
 | Data lived only in the artifact | Postgres, CSV export, JSON backup |
 
@@ -65,6 +65,11 @@ legacy/             The original artifact, for reference
 - **The database enforces the ledger rules, not just the app.** CHECK constraints reject bad statuses, non-positive
   charges and payments, and half-filled voids. Triggers make `LedgerEntry` and `AuditEvent` append-only: an entry can be
   voided once and nothing else about it can change, and audit rows cannot be edited or deleted by anything.
+- **Closed months are never rewritten.** A mistake in the current month can be voided. Anything from an earlier month is
+  corrected with a **reversal**: a new opposite entry dated today, linked to the original, which stays in the history. An
+  entry can be reversed once, and a reversed entry cannot also be voided. A **write-off** gives up on a balance that will
+  not be collected: admin-only, needs a reason, cannot exceed what was owed on its date, and is reported separately
+  (customer screen, dashboard, CSV) instead of vanishing into "adjustments".
 - **Money writes lock the customer row**, so a charge racing a suspension, or two charges racing the credit limit, are
   decided one at a time and the warnings are accurate.
 - **"Today" is the business day.** Overdue and aging use the viewer's local date; if it is missing or implausible the

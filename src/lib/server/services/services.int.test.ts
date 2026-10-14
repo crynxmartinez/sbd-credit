@@ -5,11 +5,16 @@ import type { SessionUser } from "@/lib/types";
 import type { CustomerCreateInput, DecisionInput } from "@/lib/validation";
 import { randomUUID } from "node:crypto";
 import { createCustomer, decide, getDetail, listSummaries, updateCustomer } from "./customers";
-import { recordEntry, voidEntry } from "./ledger";
+import { addDays } from "@/lib/domain/dates";
+import { businessToday } from "../as-of";
+import { recordEntry, reverseEntry, voidEntry } from "./ledger";
 
 const ADMIN: SessionUser = { id: "u-admin", username: "admin", name: "Test Admin", role: "ADMIN" };
 const EMPLOYEE: SessionUser = { id: "u-emp", username: "emp", name: "Test Employee", role: "EMPLOYEE" };
-const TODAY = "2026-10-13";
+/** The real business day: voiding depends on which month an entry falls in, so a fixed date would rot into a failing test. */
+const TODAY = businessToday();
+/** A day in the previous month, which is closed. */
+const LAST_MONTH = addDays(`${TODAY.slice(0, 8)}01`, -1);
 
 const profile = (name: string): CustomerCreateInput => ({
   businessName: name,
@@ -39,7 +44,7 @@ async function approvedCustomer(name: string, limitCents = 10_000_00): Promise<s
   return id;
 }
 
-const entry = (type: "CHARGE" | "PAYMENT" | "ADJUSTMENT", amountCents: number, extra: object = {}) => ({
+const entry = (type: "CHARGE" | "PAYMENT" | "ADJUSTMENT" | "WRITE_OFF", amountCents: number, extra: object = {}) => ({
   type,
   amountCents,
   entryDate: TODAY,
@@ -392,7 +397,7 @@ describe("workflow rules", () => {
   test("a missing due date comes from the payment terms", async () => {
     const id = await approvedCustomer("Terms Due Date Co");
     await recordEntry(id, entry("CHARGE", 100_00), EMPLOYEE);
-    expect((await getDetail(id, TODAY)).ledger[0]?.dueDate).toBe("2026-11-12");
+    expect((await getDetail(id, TODAY)).ledger[0]?.dueDate).toBe(addDays(TODAY, 30));
   });
 
   test("warns when a charge passes the limit and when a payment exceeds the balance", async () => {
@@ -464,11 +469,249 @@ describe("audit trail and derived figures", () => {
 
   test("the summary list matches the detail view", async () => {
     const id = await approvedCustomer("Summary Co");
-    await recordEntry(id, entry("CHARGE", 123_45, { dueDate: "2026-10-01" }), EMPLOYEE);
+    await recordEntry(id, entry("CHARGE", 123_45, { dueDate: addDays(TODAY, -12) }), EMPLOYEE);
 
     const summary = (await listSummaries(TODAY)).find((c) => c.id === id);
     const detail = (await getDetail(id, TODAY)).customer;
     expect(summary).toEqual(detail);
     expect(summary).toMatchObject({ balanceCents: 123_45, overdueCents: 123_45, oldestOverdueDays: 12 });
+  });
+});
+
+const reason = "Customer closed, uncollectible";
+const writeOff = (amountCents: number, extra: object = {}) => entry("WRITE_OFF", amountCents, { note: reason, ...extra });
+const reversal = (why = "Check bounced") => ({ reason: why });
+
+describe("write-offs", () => {
+  test("only an admin can write off a balance, and it reduces what is owed without counting as a payment", async () => {
+    const id = await approvedCustomer("Write Off Co");
+    await recordEntry(id, entry("CHARGE", 500_00), EMPLOYEE);
+    await expectApiError(recordEntry(id, writeOff(100_00), EMPLOYEE), 403);
+
+    await recordEntry(id, writeOff(200_00), ADMIN);
+    const detail = await getDetail(id, TODAY);
+    expect(detail.customer).toMatchObject({ balanceCents: 300_00, writtenOffCents: 200_00 });
+    expect(detail.ledger.find((e) => e.type === "WRITE_OFF")).toMatchObject({ amountCents: 200_00, note: reason });
+    expect(detail.audit.find((e) => e.action === "ledger.write_off")?.summary).toBe(`Written off — $200.00 — ${reason}`);
+  });
+
+  test("cannot write off more than is owed, or anything when nothing is owed, or on a future date", async () => {
+    const id = await approvedCustomer("Write Off Limits Co");
+    await expectApiError(recordEntry(id, writeOff(1_00), ADMIN), 409); // nothing owed yet
+    await recordEntry(id, entry("CHARGE", 50_00), EMPLOYEE);
+    await expectApiError(recordEntry(id, writeOff(50_01), ADMIN), 409);
+    await expectApiError(recordEntry(id, writeOff(10_00, { entryDate: "2099-01-01" }), ADMIN), 422);
+
+    await recordEntry(id, writeOff(50_00), ADMIN);
+    expect((await getDetail(id, TODAY)).customer.balanceCents).toBe(0);
+    await expectApiError(recordEntry(id, writeOff(1_00), ADMIN), 409);
+  });
+
+  test("the limit is what was owed on the write-off's own date, not what is owed today", async () => {
+    const id = await approvedCustomer("Write Off As Of Co");
+    await recordEntry(id, entry("CHARGE", 40_00, { entryDate: LAST_MONTH, dueDate: LAST_MONTH }), EMPLOYEE);
+    await recordEntry(id, entry("CHARGE", 60_00), EMPLOYEE);
+    // 100.00 is owed today, but only 40.00 was owed on LAST_MONTH.
+    await expectApiError(recordEntry(id, writeOff(41_00, { entryDate: LAST_MONTH }), ADMIN), 409);
+    await recordEntry(id, writeOff(40_00, { entryDate: LAST_MONTH }), ADMIN);
+  });
+
+  test("it settles the oldest charge first, so what remains keeps its true age", async () => {
+    const id = await approvedCustomer("Write Off Aging Co");
+    await recordEntry(id, entry("CHARGE", 100_00, { entryDate: addDays(TODAY, -120), dueDate: addDays(TODAY, -90) }), EMPLOYEE);
+    await recordEntry(id, entry("CHARGE", 50_00, { entryDate: addDays(TODAY, -20), dueDate: addDays(TODAY, -5) }), EMPLOYEE);
+    await recordEntry(id, writeOff(100_00), ADMIN);
+
+    const { customer } = await getDetail(id, TODAY);
+    expect(customer.buckets.d90_plus).toBe(0);
+    expect(customer).toMatchObject({ balanceCents: 50_00, overdueCents: 50_00, oldestOverdueDays: 5 });
+  });
+
+  test("the same write-off submitted twice is recorded once", async () => {
+    const id = await approvedCustomer("Write Off Retry Co");
+    await recordEntry(id, entry("CHARGE", 90_00), EMPLOYEE);
+    const requestKey = randomUUID();
+    const first = await recordEntry(id, writeOff(30_00, { requestKey }), ADMIN);
+    const second = await recordEntry(id, writeOff(30_00, { requestKey }), ADMIN);
+    expect(second).toMatchObject({ id: first.id, duplicate: true });
+    expect((await getDetail(id, TODAY)).customer.balanceCents).toBe(60_00);
+  });
+
+  test("works on a suspended account that still owes", async () => {
+    const id = await approvedCustomer("Write Off Suspended Co");
+    await recordEntry(id, entry("CHARGE", 70_00), EMPLOYEE);
+    await decide(id, { action: "suspend", version: 2, reason: null }, ADMIN);
+    await recordEntry(id, writeOff(70_00), ADMIN);
+    expect((await getDetail(id, TODAY)).customer.balanceCents).toBe(0);
+  });
+});
+
+describe("reversals", () => {
+  test("only an admin can reverse", async () => {
+    const id = await approvedCustomer("Reverse Role Co");
+    const { id: entryId } = await recordEntry(id, entry("CHARGE", 25_00), EMPLOYEE);
+    await expectApiError(reverseEntry(id, entryId, reversal(), EMPLOYEE), 403);
+  });
+
+  test("an entry from a closed month is reversed by a new entry dated today, and the closed month does not change", async () => {
+    const id = await approvedCustomer("Reverse Closed Month Co");
+    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 80_00, { entryDate: LAST_MONTH, dueDate: LAST_MONTH }), EMPLOYEE);
+    const before = (await getDetail(id, LAST_MONTH)).customer;
+
+    const result = await reverseEntry(id, chargeId, reversal("Billed to the wrong customer"), ADMIN);
+    expect(result.duplicate).toBe(false);
+
+    const detail = await getDetail(id, TODAY);
+    expect(detail.customer.balanceCents).toBe(0);
+    const row = detail.ledger.find((e) => e.id === result.id);
+    expect(row).toMatchObject({ type: "REVERSAL", amountCents: -80_00, entryDate: TODAY, reversesId: chargeId, note: "Billed to the wrong customer" });
+    expect(detail.ledger.find((e) => e.id === chargeId)).toMatchObject({ reversed: true, voided: false });
+    // The closed month still reads exactly as it did.
+    const after = (await getDetail(id, LAST_MONTH)).customer;
+    expect({ balance: after.balanceCents, overdue: after.overdueCents, buckets: after.buckets, writtenOff: after.writtenOffCents }).toEqual({
+      balance: before.balanceCents,
+      overdue: before.overdueCents,
+      buckets: before.buckets,
+      writtenOff: before.writtenOffCents,
+    });
+    expect(detail.audit.find((e) => e.action === "ledger.reversal")?.summary).toBe("Reversed charge of $80.00 — Billed to the wrong customer");
+  });
+
+  test("reversing a payment re-opens the debt it had paid", async () => {
+    const id = await approvedCustomer("Reverse Payment Co");
+    await recordEntry(id, entry("CHARGE", 100_00, { entryDate: LAST_MONTH, dueDate: LAST_MONTH }), EMPLOYEE);
+    const { id: paymentId } = await recordEntry(id, entry("PAYMENT", 100_00, { entryDate: LAST_MONTH }), EMPLOYEE);
+    expect((await getDetail(id, TODAY)).customer.balanceCents).toBe(0);
+
+    await reverseEntry(id, paymentId, reversal("Check bounced"), ADMIN);
+    const { customer } = await getDetail(id, TODAY);
+    expect(customer.balanceCents).toBe(100_00);
+    expect(customer.overdueCents).toBe(100_00);
+  });
+
+  test("reversing a write-off puts the debt back and takes it out of the written-off total", async () => {
+    const id = await approvedCustomer("Reverse Write Off Co");
+    await recordEntry(id, entry("CHARGE", 60_00), EMPLOYEE);
+    const { id: writeOffId } = await recordEntry(id, writeOff(60_00), ADMIN);
+    expect((await getDetail(id, TODAY)).customer).toMatchObject({ balanceCents: 0, writtenOffCents: 60_00 });
+
+    await reverseEntry(id, writeOffId, reversal("Customer paid after all"), ADMIN);
+    expect((await getDetail(id, TODAY)).customer).toMatchObject({ balanceCents: 60_00, writtenOffCents: 0 });
+  });
+
+  test("an entry can be reversed once: a repeat by the same person is a no-op, anything else is refused", async () => {
+    const id = await approvedCustomer("Reverse Twice Co");
+    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 15_00), EMPLOYEE);
+    const first = await reverseEntry(id, chargeId, reversal("Entered twice"), ADMIN);
+    const retry = await reverseEntry(id, chargeId, reversal("Entered twice"), ADMIN);
+    expect(retry).toEqual({ id: first.id, duplicate: true });
+    await expectApiError(reverseEntry(id, chargeId, reversal("A different reason"), ADMIN), 409);
+    await expectApiError(reverseEntry(id, chargeId, reversal("Entered twice"), { ...ADMIN, id: "u-other", name: "Other Admin" }), 409);
+
+    const detail = await getDetail(id, TODAY);
+    expect(detail.ledger.filter((e) => e.type === "REVERSAL")).toHaveLength(1);
+    expect(detail.audit.filter((e) => e.action === "ledger.reversal")).toHaveLength(1);
+  });
+
+  test("two admins reversing the same entry at once: exactly one reversal exists", async () => {
+    const id = await approvedCustomer("Reverse Race Co");
+    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 45_00), EMPLOYEE);
+    const outcomes = await Promise.allSettled([
+      reverseEntry(id, chargeId, reversal("Mine"), ADMIN),
+      reverseEntry(id, chargeId, reversal("Mine too"), { ...ADMIN, id: "u-admin-2", name: "Second Admin" }),
+    ]);
+    expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+    expect((await getDetail(id, TODAY)).ledger.filter((e) => e.type === "REVERSAL")).toHaveLength(1);
+    expect((await getDetail(id, TODAY)).customer.balanceCents).toBe(0);
+  });
+
+  test("the same form submitted twice (same request key) records one reversal", async () => {
+    const id = await approvedCustomer("Reverse Key Co");
+    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 12_00), EMPLOYEE);
+    const requestKey = randomUUID();
+    const first = await reverseEntry(id, chargeId, { reason: "Wrong job", requestKey }, ADMIN);
+    const second = await reverseEntry(id, chargeId, { reason: "Wrong job", requestKey }, ADMIN);
+    expect(second).toEqual({ id: first.id, duplicate: true });
+  });
+
+  test("a reversal cannot be reversed, and a voided entry has nothing to reverse", async () => {
+    const id = await approvedCustomer("Reverse Limits Co");
+    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 20_00), EMPLOYEE);
+    const { id: reversalId } = await reverseEntry(id, chargeId, reversal(), ADMIN);
+    await expectApiError(reverseEntry(id, reversalId, reversal("Undo the undo"), ADMIN), 409);
+
+    const { id: other } = await recordEntry(id, entry("CHARGE", 5_00), EMPLOYEE);
+    await voidEntry(id, other, "Typo", ADMIN);
+    await expectApiError(reverseEntry(id, other, reversal(), ADMIN), 409);
+    await expectApiError(reverseEntry(id, "no-such-entry", reversal(), ADMIN), 404);
+  });
+
+  test("a reversal of a future-dated entry is dated no earlier than that entry", async () => {
+    const id = await approvedCustomer("Reverse Future Co");
+    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 33_00, { entryDate: "2099-01-01" }), EMPLOYEE);
+    const result = await reverseEntry(id, chargeId, reversal(), ADMIN);
+    expect((await getDetail(id, "2099-01-01")).ledger.find((e) => e.id === result.id)?.entryDate).toBe("2099-01-01");
+    expect((await getDetail(id, "2099-01-01")).customer.balanceCents).toBe(0);
+  });
+});
+
+describe("voiding after reversals and month close", () => {
+  test("this month's entries can still be voided; an entry from a closed month cannot, and says to reverse it", async () => {
+    const id = await approvedCustomer("Void Window Co");
+    const { id: oldId } = await recordEntry(id, entry("CHARGE", 10_00, { entryDate: LAST_MONTH, dueDate: LAST_MONTH }), EMPLOYEE);
+    const { id: newId } = await recordEntry(id, entry("CHARGE", 10_00), EMPLOYEE);
+
+    await voidEntry(id, newId, "Typo", ADMIN);
+    const error = await voidEntry(id, oldId, "Typo", ADMIN).then(() => null, (caught: unknown) => caught);
+    expect(error).toMatchObject({ status: 409, code: "closed_month" });
+    expect(String((error as ApiError).message)).toContain("Reverse it instead");
+    expect((await getDetail(id, TODAY)).customer.balanceCents).toBe(10_00);
+  });
+
+  test("a reversed entry cannot also be voided (that would cancel it twice), and a reversal cannot be voided", async () => {
+    const id = await approvedCustomer("Void After Reverse Co");
+    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 40_00), EMPLOYEE);
+    const { id: reversalId } = await reverseEntry(id, chargeId, reversal(), ADMIN);
+
+    await expectApiError(voidEntry(id, chargeId, "Typo", ADMIN), 409);
+    await expectApiError(voidEntry(id, reversalId, "Typo", ADMIN), 409);
+    expect((await getDetail(id, TODAY)).customer.balanceCents).toBe(0);
+  });
+});
+
+describe("the database itself protects write-offs and reversals", () => {
+  const base = (customerId: string) => ({ customerId, entryDate: new Date(`${TODAY}T00:00:00Z`), createdBy: "raw" });
+
+  test("a write-off or reversal without a reason is refused", async () => {
+    const id = await approvedCustomer("Raw Reason Co");
+    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 10_00), EMPLOYEE);
+    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "WRITE_OFF", amountCents: 5_00 } })).rejects.toThrow();
+    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "WRITE_OFF", amountCents: 5_00, note: "  " } })).rejects.toThrow();
+    await expect(
+      prisma.ledgerEntry.create({ data: { ...base(id), type: "REVERSAL", amountCents: -10_00, reversesEntryId: chargeId } }),
+    ).rejects.toThrow();
+  });
+
+  test("only a reversal may name an entry it reverses, and a write-off must be positive", async () => {
+    const id = await approvedCustomer("Raw Shape Co");
+    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 10_00), EMPLOYEE);
+    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "REVERSAL", amountCents: -10_00, note: "Because" } })).rejects.toThrow();
+    await expect(
+      prisma.ledgerEntry.create({ data: { ...base(id), type: "CHARGE", amountCents: 5, reversesEntryId: chargeId } }),
+    ).rejects.toThrow();
+    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "WRITE_OFF", amountCents: -5_00, note: "Because" } })).rejects.toThrow();
+    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "REVERSAL", amountCents: 0, note: "Because", reversesEntryId: chargeId } })).rejects.toThrow();
+  });
+
+  test("an entry cannot be reversed twice, and what a reversal points at cannot be changed", async () => {
+    const id = await approvedCustomer("Raw Twice Co");
+    const { id: chargeId } = await recordEntry(id, entry("CHARGE", 10_00), EMPLOYEE);
+    const { id: other } = await recordEntry(id, entry("CHARGE", 20_00), EMPLOYEE);
+    const { id: reversalId } = await reverseEntry(id, chargeId, reversal(), ADMIN);
+
+    await expect(
+      prisma.ledgerEntry.create({ data: { ...base(id), type: "REVERSAL", amountCents: -10_00, note: "Again", reversesEntryId: chargeId } }),
+    ).rejects.toThrow();
+    await expect(prisma.ledgerEntry.update({ where: { id: reversalId }, data: { reversesEntryId: other } })).rejects.toThrow();
   });
 });

@@ -38,7 +38,9 @@ export function toCustomerBase(row: Customer): CustomerBase {
   };
 }
 
-export function toLedgerRecord(row: Pick<LedgerEntry, "id" | "type" | "amountCents" | "entryDate" | "dueDate" | "voidedAt">): LedgerRecord {
+export function toLedgerRecord(
+  row: Pick<LedgerEntry, "id" | "type" | "amountCents" | "entryDate" | "dueDate" | "voidedAt" | "reversesEntryId">,
+): LedgerRecord {
   return {
     id: row.id,
     type: row.type as LedgerType,
@@ -46,10 +48,14 @@ export function toLedgerRecord(row: Pick<LedgerEntry, "id" | "type" | "amountCen
     entryDate: requiredDate(row.entryDate, "entryDate"),
     dueDate: dbDateToIso(row.dueDate),
     voided: row.voidedAt !== null,
+    reverses: row.reversesEntryId,
   };
 }
 
-export function toLedgerDto(row: LedgerEntry): LedgerEntryDto {
+/** A ledger row, plus whether a reversal has been recorded against it. */
+export type LedgerRow = LedgerEntry & { reversedBy: { id: string } | null };
+
+export function toLedgerDto(row: LedgerRow): LedgerEntryDto {
   return {
     id: row.id,
     type: row.type as LedgerType,
@@ -64,6 +70,8 @@ export function toLedgerDto(row: LedgerEntry): LedgerEntryDto {
     voidedAt: row.voidedAt ? row.voidedAt.toISOString() : null,
     voidedBy: row.voidedBy,
     voidReason: row.voidReason,
+    reversesId: row.reversesEntryId,
+    reversed: row.reversedBy !== null,
   };
 }
 

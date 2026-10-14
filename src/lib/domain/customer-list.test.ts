@@ -9,7 +9,7 @@ function customer(overrides: Partial<CustomerSummary>): CustomerSummary {
     paymentTerms: "Net 30", creditStartDate: null, accountingAppName: null, accountingProjectUrl: null, notes: null,
     version: 1, createdAt: "", updatedAt: "", balanceCents: 0, creditCents: 0, availableCents: 0, utilizationPct: 0,
     utilizationLevel: "ok", overdueCents: 0, oldestOverdueDays: 0, nextDueDate: null, nextDueCents: 0,
-    buckets: { current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0 },
+    buckets: { current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0 }, writtenOffCents: 0,
     ...overrides,
   };
 }

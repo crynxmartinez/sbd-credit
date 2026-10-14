@@ -3,6 +3,7 @@ import {
   addDays,
   dbDateToIso,
   diffDays,
+  isInClosedMonth,
   dueDateFor,
   formatDate,
   isoToDbDate,
@@ -101,5 +102,18 @@ describe("database date mapping", () => {
 
   test("returns null for missing values", () => {
     expect(dbDateToIso(null)).toBeNull();
+  });
+});
+
+describe("isInClosedMonth", () => {
+  test("an entry from an earlier month is closed; this month and later are open", () => {
+    expect(isInClosedMonth("2026-09-30", "2026-10-01")).toBe(true);
+    expect(isInClosedMonth("2026-10-01", "2026-10-31")).toBe(false);
+    expect(isInClosedMonth("2026-11-02", "2026-10-13")).toBe(false);
+  });
+
+  test("works across a year boundary", () => {
+    expect(isInClosedMonth("2025-12-31", "2026-01-01")).toBe(true);
+    expect(isInClosedMonth("2026-01-01", "2026-01-31")).toBe(false);
   });
 });

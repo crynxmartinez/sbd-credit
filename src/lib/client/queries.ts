@@ -87,6 +87,18 @@ export function useRecordEntry(id: string) {
   });
 }
 
+export function useReverseEntry(id: string) {
+  const refresh = useRefreshAll();
+  return useMutation({
+    mutationFn: (input: { entryId: string; reason: string; requestKey: string }) =>
+      apiFetch<{ id: string; duplicate: boolean }>(`${customerPath(id)}/ledger/${encodeURIComponent(input.entryId)}/reverse`, {
+        method: "POST",
+        body: { reason: input.reason, requestKey: input.requestKey },
+      }),
+    onSettled: refresh,
+  });
+}
+
 export function useVoidEntry(id: string) {
   const refresh = useRefreshAll();
   return useMutation({

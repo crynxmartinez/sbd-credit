@@ -59,6 +59,15 @@ describe("toSummary", () => {
     expect(summary.utilizationLevel).toBe("crit");
   });
 
+  test("shows how much has been written off, as of the day", () => {
+    const entries: LedgerRecord[] = [
+      charge("a", 500_00, "2026-09-30"),
+      { id: "w", type: "WRITE_OFF", amountCents: 200_00, entryDate: "2026-10-05", dueDate: null, voided: false },
+    ];
+    expect(toSummary(base(), entries, ASOF)).toMatchObject({ balanceCents: 300_00, writtenOffCents: 200_00 });
+    expect(toSummary(base(), entries, "2026-10-04").writtenOffCents).toBe(0);
+  });
+
   test("an empty ledger is a clean account", () => {
     expect(toSummary(base(), [], ASOF)).toMatchObject({ balanceCents: 0, overdueCents: 0, nextDueDate: null });
   });
@@ -84,6 +93,16 @@ describe("buildDashboard", () => {
   test("totals outstanding and overdue money", () => {
     expect(dashboard.stats.totalOutstandingCents).toBe(6_000_00);
     expect(dashboard.stats.totalOverdueCents).toBe(5_000_00);
+  });
+
+  test("totals what has been written off", () => {
+    const written = toSummary(
+      base({ id: "w" }),
+      [charge("q", 90_00, "2026-09-30"), { id: "wo", type: "WRITE_OFF", amountCents: 90_00, entryDate: "2026-10-01", dueDate: null, voided: false }],
+      ASOF,
+    );
+    expect(buildDashboard([...customers, written], ASOF).stats.totalWrittenOffCents).toBe(90_00);
+    expect(dashboard.stats.totalWrittenOffCents).toBe(0);
   });
 
   test("sums aging across customers", () => {

@@ -69,9 +69,9 @@ model LedgerEntry {
   id          String    @id @default(cuid())
   customer    Customer  @relation(fields: [customerId], references: [id], onDelete: Restrict)
   customerId  String
-  /// CHARGE | PAYMENT | ADJUSTMENT
+  /// CHARGE | PAYMENT | ADJUSTMENT | WRITE_OFF | REVERSAL
   type        String
-  /// Positive for CHARGE and PAYMENT, signed for ADJUSTMENT.
+  /// Positive for CHARGE, PAYMENT and WRITE_OFF; signed for ADJUSTMENT and REVERSAL.
   amountCents Int
   entryDate   DateTime  @db.Date
   /// When a charge falls due. Null falls back to entryDate.
@@ -90,6 +90,12 @@ model LedgerEntry {
   voidedBy    String?
   voidedById  String?
   voidReason  String?
+
+  /// Only for a REVERSAL: the entry it offsets. An entry can be reversed once. The reversal is dated today, so a past
+  /// month's figures never change.
+  reversesEntryId String?      @unique
+  reverses        LedgerEntry? @relation("Reversal", fields: [reversesEntryId], references: [id], onDelete: Restrict)
+  reversedBy      LedgerEntry? @relation("Reversal")
 
   auditEvents AuditEvent[]
 
