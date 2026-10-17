@@ -321,5 +321,7 @@ describe("the migration's backfill of write-offs recorded before allocations exi
     await backfill();
     expect(await allocationsOf(legacy.id)).toEqual([]);
     expect(computeAging(await recordsOf(id), TODAY).balanceCents).toBe(before.balanceCents);
+    // Leave nothing behind that later runs (and the restore drill, which uses this schema in CI) would trip over.
+    await prisma.ledgerEntry.update({ where: { id: legacy.id }, data: { voidedAt: new Date(), voidedBy: "test", voidReason: "cleanup" } });
   });
 });

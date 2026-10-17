@@ -120,7 +120,11 @@ try {
   const allocatedTo = {};
   for (const row of c.writeOffAllocations ?? []) allocatedTo[row.writeOffEntryId] = (allocatedTo[row.writeOffEntryId] ?? 0) + row.amountCents;
   const writeOffsInForce = c.ledger.filter((row) => row.type === "WRITE_OFF" && !row.voidedAt && !reversedIds.has(row.id));
-  const unallocated = writeOffsInForce.filter((row) => allocatedTo[row.id] !== row.amountCents);
+  // A write-off that could not be allocated even in the ORIGINAL (an old one that exceeds what ever existed) stays an ordinary
+  // credit: the drill only insists that every write-off that WAS allocated there is allocated after the old-format restore.
+  const originalAllocated = {};
+  for (const row of a.writeOffAllocations ?? []) originalAllocated[row.writeOffEntryId] = (originalAllocated[row.writeOffEntryId] ?? 0) + row.amountCents;
+  const unallocated = writeOffsInForce.filter((row) => allocatedTo[row.id] !== row.amountCents && originalAllocated[row.id] === row.amountCents);
   if (unallocated.length > 0) problems.push(`${unallocated.length} write-off(s) in force were not allocated after restoring the old-format copy`);
   else console.log(`  old-format restore: balances identical, ${writeOffsInForce.length} write-off(s) in force all allocated`);
   if (JSON.stringify(a).includes("passwordHash") || JSON.stringify(b).includes("passwordHash")) problems.push("a backup file contains a password hash");
