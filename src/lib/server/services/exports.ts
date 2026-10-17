@@ -2,6 +2,7 @@ import "server-only";
 import { centsToDecimal, toCsv } from "@/lib/domain/csv";
 import { dbDateToIso } from "@/lib/domain/dates";
 import { LEDGER_CSV_HEADER, ledgerCsvRow } from "@/lib/domain/ledger-csv";
+import { formatCents } from "@/lib/domain/money";
 import type { LedgerType } from "@/lib/domain/constants";
 import { prisma } from "../db";
 import { listSummaries } from "./customers";
@@ -26,7 +27,10 @@ export async function customersCsv(asOf: string): Promise<string> {
 /** Every ledger entry, voided ones included and marked, so the export reconciles to the books. */
 export async function ledgerCsv(asOf: string): Promise<string> {
   const entries = await prisma.ledgerEntry.findMany({
-    include: { customer: { select: { businessName: true } } },
+    include: {
+      customer: { select: { businessName: true } },
+      writeOffAllocations: { include: { chargeEntry: { select: { reference: true, amountCents: true, entryDate: true } } }, orderBy: { createdAt: "asc" } },
+    },
     orderBy: [{ entryDate: "desc" }, { createdAt: "desc" }, { id: "desc" }],
   });
   // An entry is "reversed" when a live entry points at it.
@@ -47,6 +51,9 @@ export async function ledgerCsv(asOf: string): Promise<string> {
         voidReason: e.voidReason,
         reversed: reversed.has(e.id),
         isReversal: e.type === "REVERSAL",
+        writtenOffAgainst: e.writeOffAllocations
+          .map((a) => `${a.chargeEntry.reference ?? `charge of ${formatCents(a.chargeEntry.amountCents, { fixed: true })} dated ${dbDateToIso(a.chargeEntry.entryDate) ?? ""}`} (${formatCents(a.amountCents, { fixed: true })})`)
+          .join("; "),
       },
       asOf,
     ),

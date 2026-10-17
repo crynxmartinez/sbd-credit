@@ -131,7 +131,7 @@ test("a write-off cannot exceed what is owed, needs a reason, and is reported se
 
   await expect.poll(() => balanceText(page)).toBe("$40.00");
   await expect(drawer(page).getByText(/Written off:\s*\$60\.00/)).toBeVisible();
-  await expect(drawer(page).locator(".ledger-item").filter({ hasText: "Write-off" })).toContainText("−$60.00");
+  await expect(drawer(page).locator(".ledger-item").filter({ has: page.locator(".ledger-label", { hasText: /^Write-off$/ }) })).toContainText("−$60.00");
 });
 
 test("the dashboard shows what has been written off", async () => {

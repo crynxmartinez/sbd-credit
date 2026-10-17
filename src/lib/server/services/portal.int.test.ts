@@ -355,20 +355,24 @@ describe("signing in (one page for staff and customers)", () => {
     expect((await authenticateAny(contact.email, GOOD_PASSWORD)).kind).toBe("customer");
   });
 
-  test("a staff account IS locked, even when the wrong guesses arrive all at once (the count and the lock are one statement)", async () => {
+  test("a staff account is NOT locked by wrong guesses, even a burst of them: anyone who knows the username could otherwise lock the person out", async () => {
     const username = `locktest.${randomUUID().slice(0, 8)}`;
     const user = await prisma.appUser.create({ data: { username, name: "Lock Test", role: "EMPLOYEE", passwordHash: await bcrypt.hash(GOOD_PASSWORD, 4) } });
 
     await Promise.allSettled(Array.from({ length: 10 }, (_, i) => authenticateAny(username, `wrong-parallel-guess-${i}-zz`)));
-    const row = await prisma.appUser.findUniqueOrThrow({ where: { id: user.id } });
-    expect(row.lockedUntil).not.toBeNull();
-    expect(row.failedLogins).toBeGreaterThanOrEqual(5);
-    await expectApiError(authenticateAny(username, GOOD_PASSWORD), 401, "bad_login"); // locked: even the right password is refused
+    // Every guess is counted (one atomic statement, so a burst cannot lose any), and nothing is locked.
+    expect(await prisma.appUser.findUniqueOrThrow({ where: { id: user.id } })).toMatchObject({ failedLogins: 10, lockedUntil: null });
+    expect((await authenticateAny(username, GOOD_PASSWORD)).kind).toBe("staff"); // the right password still works
+    expect(await prisma.appUser.findUniqueOrThrow({ where: { id: user.id } })).toMatchObject({ failedLogins: 0, lockedUntil: null });
+  });
 
-    // After the lock runs out the count restarts at 1 and the account works again.
+  test("a lock that already sits on a staff row (set by hand, or left by the old rule) is still honoured until it runs out", async () => {
+    const username = `oldlock.${randomUUID().slice(0, 8)}`;
+    const user = await prisma.appUser.create({
+      data: { username, name: "Old Lock", role: "EMPLOYEE", passwordHash: await bcrypt.hash(GOOD_PASSWORD, 4), failedLogins: 5, lockedUntil: new Date(Date.now() + 600_000) },
+    });
+    await expectApiError(authenticateAny(username, GOOD_PASSWORD), 401, "bad_login");
     await prisma.appUser.update({ where: { id: user.id }, data: { lockedUntil: new Date(Date.now() - 1000) } });
-    await expectApiError(authenticateAny(username, "wrong-after-the-lock-ended"), 401);
-    expect(await prisma.appUser.findUniqueOrThrow({ where: { id: user.id } })).toMatchObject({ failedLogins: 1, lockedUntil: null });
     expect((await authenticateAny(username, GOOD_PASSWORD)).kind).toBe("staff");
   });
 

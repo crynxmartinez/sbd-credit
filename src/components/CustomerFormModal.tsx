@@ -3,6 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiClientError } from "@/lib/client/api";
+import { useBackGuard } from "@/lib/client/back-guard";
 import { useBusinessToday, useCreateCustomer, useCustomers, useUpdateCustomer } from "@/lib/client/queries";
 import { PAYMENT_TERMS } from "@/lib/domain/constants";
 import { centsToDecimal } from "@/lib/domain/csv";
@@ -103,6 +104,8 @@ export function CustomerFormModal({ customer, onClose, onCreated }: Props) {
     onClose();
   }
   const dialogRef = useDialog(requestClose);
+  // Back is a third way out of this form, besides Close and Escape: ask there too.
+  useBackGuard({ active: dirty, message: () => "Discard what you have entered in this form?", onLeave: onClose });
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   // One key per form: if a save is retried (a lost reply, a double click) the server recognises it and adds nothing twice.

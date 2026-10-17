@@ -6,6 +6,7 @@ import { useBusinessToday, useReverseEntry, useVoidEntry } from "@/lib/client/qu
 import { MIN_REASON_LENGTH } from "@/lib/domain/constants";
 import { correctionFor, type Correction } from "@/lib/domain/corrections";
 import { formatDate } from "@/lib/domain/dates";
+import { chargeLabel } from "@/lib/client/ledger-records";
 import { effectOnBalance } from "@/lib/domain/ledger";
 import { formatCents } from "@/lib/domain/money";
 import type { LedgerEntryDto } from "@/lib/types";
@@ -121,6 +122,7 @@ export function LedgerList({ customerId, ledger }: { customerId: string; ledger:
   const { user } = useUi();
   const today = useBusinessToday();
   const [correcting, setCorrecting] = useState<{ id: string; how: Correction } | null>(null);
+  const byId = new Map(ledger.map((entry) => [entry.id, entry]));
 
   if (ledger.length === 0) return <div style={{ color: "var(--text-faint)", fontSize: "12.5px", padding: "10px 0" }}>No transactions yet.</div>;
 
@@ -135,6 +137,10 @@ export function LedgerList({ customerId, ledger }: { customerId: string; ledger:
           entry.reference,
           entry.dueDate && (entry.type === "CHARGE" || entry.type === "ADJUSTMENT") ? `due ${formatDate(entry.dueDate)}` : null,
           entry.note,
+          // A write-off says which charges it covers.
+          entry.type === "WRITE_OFF" && entry.covers.length > 0
+            ? `covers ${entry.covers.map((cover) => `${chargeLabel(byId.get(cover.chargeId))} (${formatCents(cover.amountCents, { fixed: true })})`).join(", ")}`
+            : null,
           `by ${entry.createdBy}`,
         ].filter(Boolean);
         const verb = how === "reverse" ? "Reverse" : "Void";
@@ -144,11 +150,13 @@ export function LedgerList({ customerId, ledger }: { customerId: string; ledger:
               <span className="ledger-label">{LABEL[entry.type]}</span>
               {entry.voided ? <span className="void-tag">Voided</span> : null}
               {entry.reversed ? <span className="void-tag">Reversed</span> : null}
+              {entry.writtenOffCents > 0 ? <span className="void-tag">Written off {formatCents(entry.writtenOffCents, { fixed: true })}</span> : null}
             </div>
             <div className={`ledger-amount${paying ? " pay" : ""}`}>{text}</div>
             <div className="ledger-sub">
               {details.join(" · ")}
               {entry.voided ? <div>Voided by {entry.voidedBy}: {entry.voidReason}</div> : null}
+              {entry.writtenOffCents > 0 && !entry.voided && !entry.reversed ? <div>A write-off covers this charge. Reverse that write-off first to correct it.</div> : null}
             </div>
             {how ? (
               <div className="ledger-actions">

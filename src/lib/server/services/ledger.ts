@@ -1,18 +1,20 @@
 import "server-only";
 import { Prisma } from "@/generated/prisma/client";
 import type { CustomerStatus, LedgerType } from "@/lib/domain/constants";
-import { dbDateToIso, dueDateFor, isInClosedMonth, isoToDbDate } from "@/lib/domain/dates";
+import { dbDateToIso, dueDateFor, formatDate, isInClosedMonth, isoToDbDate } from "@/lib/domain/dates";
 import { entryDateIssue } from "@/lib/domain/entry-dates";
 import { sameLedgerSubmission } from "@/lib/domain/idempotency";
-import { effectOnBalance, reversalFor } from "@/lib/domain/ledger";
+import { effectOnBalance, reversalFor, type LedgerRecord } from "@/lib/domain/ledger";
 import { formatCents } from "@/lib/domain/money";
 import { can, type Action } from "@/lib/domain/roles";
 import { canTakePayment } from "@/lib/domain/status";
+import { planWriteOffAllocation, sameAllocations, writeOffTargets, type Allocation } from "@/lib/domain/write-off";
 import type { SessionUser } from "@/lib/types";
 import type { LedgerEntryInput, ReversalInput } from "@/lib/validation";
 import { systemClock, type Clock } from "../clock";
 import { ApiError } from "../http";
 import { transaction } from "../tx";
+import { toLedgerRecord } from "../serialize";
 import { writeAudit } from "./audit";
 
 export type LedgerWarning = "over_limit" | "overpayment" | null;
@@ -101,54 +103,93 @@ export async function balanceOf(
   return { balanceCents: Number(row?.total ?? BigInt(0)), entries: row?.entries ?? 0 };
 }
 
-/** The dates of the write-offs still in force (not voided, not undone by a reversal), optionally only those on or after `from`. */
-async function liveWriteOffDates(tx: Prisma.TransactionClient, customerId: string, from: string | null): Promise<string[]> {
-  const rows = await tx.$queryRaw<{ entryDate: Date }[]>`
-    SELECT DISTINCT w."entryDate" FROM "LedgerEntry" w
-    WHERE w."customerId" = ${customerId} AND w."type" = 'WRITE_OFF' AND w."voidedAt" IS NULL
-      AND (${from}::date IS NULL OR w."entryDate" >= ${from}::date)
-      AND NOT EXISTS (SELECT 1 FROM "LedgerEntry" r WHERE r."reversesEntryId" = w."id" AND r."voidedAt" IS NULL)`;
-  return rows.map((row) => dbDateToIso(row.entryDate) ?? "").filter(Boolean);
+/** Every live entry of the customer, with the allocations of its write-offs: the books as the pure rules in domain/ see them. */
+async function loadRecords(tx: Prisma.TransactionClient, customerId: string): Promise<LedgerRecord[]> {
+  const rows = await tx.ledgerEntry.findMany({
+    where: { customerId, voidedAt: null },
+    select: {
+      id: true, type: true, amountCents: true, entryDate: true, dueDate: true, voidedAt: true, reversesEntryId: true,
+      writeOffAllocations: { select: { chargeEntryId: true, amountCents: true } },
+    },
+  });
+  return rows.map(toLedgerRecord);
 }
 
 /**
- * A write-off gives up on money that is owed, so it cannot be dated ahead, and cannot exceed what is owed BOTH on its own
- * date and today: a write-off backdated to before the customer paid would otherwise leave a negative balance.
+ * Decides which charges a write-off covers, or refuses it. A write-off gives up on money that is owed, so it cannot be
+ * dated ahead, and each charge it covers must have that much still open on EVERY day the write-off will be in force (from its
+ * own date to today): otherwise a write-off backdated to before a payment, or to a time another write-off was in force, would
+ * settle one charge twice for the days in between. The default is the oldest-due charges; the person may choose instead.
  */
-async function assertWritableOff(tx: Prisma.TransactionClient, customerId: string, input: LedgerEntryInput, today: string, owedToday: number): Promise<void> {
+async function planWriteOff(tx: Prisma.TransactionClient, customerId: string, input: LedgerEntryInput, today: string): Promise<Allocation[]> {
   if (input.entryDate > today) throw new ApiError(422, "invalid_entry", "A write-off cannot be dated in the future.");
-  const { balanceCents: owedThen } = await balanceOf(tx, customerId, input.entryDate);
-  const owed = Math.min(owedThen, owedToday);
-  if (owed <= 0) throw new ApiError(409, "nothing_owed", "Nothing is owed, so there is nothing to write off.");
-  if (input.amountCents > owed) {
-    throw new ApiError(409, "exceeds_balance", `You can write off at most ${formatCents(owed, { fixed: true })}, which is what is owed.`);
+  const targets = writeOffTargets(await loadRecords(tx, customerId), input.entryDate, today);
+  const plan = planWriteOffAllocation(input.amountCents, targets, input.allocations);
+  if (plan.ok) return plan.allocations;
+  if (plan.code === "nothing_owed") throw new ApiError(409, "nothing_owed", "Nothing is owed, so there is nothing to write off.");
+  if (plan.code === "exceeds_balance") {
+    throw new ApiError(409, "exceeds_balance", `You can write off at most ${formatCents(plan.maxCents, { fixed: true })}, which is what is owed.`);
+  }
+  throw new ApiError(
+    409,
+    "invalid_allocation",
+    `The charges chosen do not match what is owed now (something may have changed since you opened this form). You can write off at most ${formatCents(plan.maxCents, { fixed: true })}. Review the write-off and try again.`,
+  );
+}
+
+interface CoverRow {
+  writeOffCents: number;
+  entryDate: Date;
+  reversed: boolean;
+}
+
+/** The write-offs on the books (not voided) that cover this entry, and whether each has been reversed since. */
+async function writeOffsCovering(tx: Prisma.TransactionClient, entryId: string): Promise<CoverRow[]> {
+  return tx.$queryRaw<CoverRow[]>`
+    SELECT w."amountCents" AS "writeOffCents", w."entryDate",
+           EXISTS (SELECT 1 FROM "LedgerEntry" r WHERE r."reversesEntryId" = w."id" AND r."voidedAt" IS NULL) AS "reversed"
+    FROM "WriteOffAllocation" a JOIN "LedgerEntry" w ON w."id" = a."writeOffEntryId"
+    WHERE a."chargeEntryId" = ${entryId} AND w."voidedAt" IS NULL`;
+}
+
+/**
+ * Taking a charge out of the books must not leave a write-off pointing at nothing. A charge that a write-off covers cannot
+ * be voided or reversed until that write-off is reversed. A charge that a write-off covered EARLIER and has since been
+ * reversed cannot be voided (a void erases it from every day, including the days the write-off was in force), only reversed.
+ * A charge nothing ever covered can always be corrected.
+ */
+async function assertNotCoveredByWriteOff(tx: Prisma.TransactionClient, entryId: string, how: "void" | "reverse"): Promise<void> {
+  const covering = await writeOffsCovering(tx, entryId);
+  const live = covering.find((row) => !row.reversed);
+  if (live) {
+    throw new ApiError(
+      409,
+      "write_off_covers",
+      `A write-off of ${formatCents(live.writeOffCents, { fixed: true })} dated ${formatDate(dbDateToIso(live.entryDate) ?? "")} covers this charge. Reverse that write-off first, then correct the charge.`,
+    );
+  }
+  if (how === "void" && covering.length > 0) {
+    throw new ApiError(409, "write_off_history", "A write-off covered this charge earlier (it has since been reversed), so it cannot be voided. Reverse the charge instead.");
   }
 }
 
 /**
- * Taking a charge out of the books (a void or a reversal) lowers what is owed. If a write-off was relying on that charge,
- * the balance would go negative while the write-off still says the debt was given up: money that was never owed, or worse,
- * a later charge silently absorbed by a write-off that was meant for this one.
- *
- * A void removes the charge from its own date onward, so only write-offs dated on or after it can depend on it, and each one
- * must still be covered on ITS date. A reversal takes effect today, so what matters is that today's balance stays at or
- * above zero while any write-off stands. `effectFrom` is the entry's date for a void, null for a reversal.
+ * Write-offs from before allocations existed settle the oldest charge like a payment, so correcting a charge could still push
+ * the balance below zero while one of them stands. While the customer has any such write-off, a correction that lowers what
+ * is owed must leave today's balance at or above zero.
  */
-async function assertNoWriteOffDependsOn(
-  tx: Prisma.TransactionClient,
-  customerId: string,
-  effectCents: number,
-  today: string,
-  effectFrom: string | null,
-): Promise<void> {
+async function assertLegacyWriteOffSafe(tx: Prisma.TransactionClient, customerId: string, effectCents: number, today: string): Promise<void> {
   if (effectCents <= 0) return;
-  const writeOffDates = await liveWriteOffDates(tx, customerId, effectFrom);
-  if (writeOffDates.length === 0) return;
-  for (const date of [...writeOffDates, today]) {
-    const { balanceCents } = await balanceOf(tx, customerId, date);
-    if (balanceCents - effectCents < 0) {
-      throw new ApiError(409, "write_off_covers", "A write-off covers this charge. Reverse the write-off first, then correct the charge.");
-    }
+  const [row] = await tx.$queryRaw<{ found: number }[]>`
+    SELECT 1 AS found FROM "LedgerEntry" w
+    WHERE w."customerId" = ${customerId} AND w."type" = 'WRITE_OFF' AND w."voidedAt" IS NULL
+      AND NOT EXISTS (SELECT 1 FROM "LedgerEntry" r WHERE r."reversesEntryId" = w."id" AND r."voidedAt" IS NULL)
+      AND NOT EXISTS (SELECT 1 FROM "WriteOffAllocation" a WHERE a."writeOffEntryId" = w."id")
+    LIMIT 1`;
+  if (!row) return;
+  const { balanceCents } = await balanceOf(tx, customerId, today);
+  if (balanceCents - effectCents < 0) {
+    throw new ApiError(409, "write_off_covers", "An earlier write-off covers this charge. Reverse the write-off first, then correct the charge.");
   }
 }
 
@@ -156,6 +197,21 @@ function toDateErrors(issue: { code: string; message: string }): ApiError {
   return issue.code === "closed_month"
     ? new ApiError(403, "closed_month_admin_only", issue.message)
     : new ApiError(422, "invalid_entry", issue.message);
+}
+
+/** "covers INV-1 ($60.00), a charge of $40.00 dated Oct 3, 2026 ($40.00)": which charges a write-off covers, for the history. */
+async function describeCovers(tx: Prisma.TransactionClient, allocations: readonly Allocation[]): Promise<string> {
+  const rows = await tx.ledgerEntry.findMany({
+    where: { id: { in: allocations.map((allocation) => allocation.chargeId) } },
+    select: { id: true, reference: true, amountCents: true, entryDate: true },
+  });
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const parts = allocations.map((allocation) => {
+    const charge = byId.get(allocation.chargeId);
+    const label = charge?.reference ?? `a charge of ${formatCents(charge?.amountCents ?? 0, { fixed: true })} dated ${formatDate(dbDateToIso(charge?.entryDate ?? null) ?? "")}`;
+    return `${label} (${formatCents(allocation.amountCents, { fixed: true })})`;
+  });
+  return `covers ${parts.join(", ")}`;
 }
 
 export async function recordEntry(customerId: string, input: LedgerEntryInput, actor: SessionUser, clock: Clock = systemClock): Promise<RecordResult> {
@@ -171,11 +227,17 @@ export async function recordEntry(customerId: string, input: LedgerEntryInput, a
     if (input.requestKey) {
       const earlier = await tx.ledgerEntry.findUnique({
         where: { customerId_requestKey: { customerId, requestKey: input.requestKey } },
-        select: { id: true, type: true, amountCents: true, entryDate: true, dueDate: true, reference: true, note: true },
+        select: {
+          id: true, type: true, amountCents: true, entryDate: true, dueDate: true, reference: true, note: true,
+          writeOffAllocations: { select: { chargeEntryId: true, amountCents: true } },
+        },
       });
       if (earlier) {
         const stored = { ...earlier, entryDate: dbDateToIso(earlier.entryDate) ?? "", dueDate: dbDateToIso(earlier.dueDate) };
         if (!sameLedgerSubmission(stored, input)) throw keyReuse();
+        // A write-off sent again with a DIFFERENT choice of charges is an edited form, not a retry.
+        const storedSplit = earlier.writeOffAllocations.map((allocation) => ({ chargeId: allocation.chargeEntryId, amountCents: allocation.amountCents }));
+        if (input.allocations && !sameAllocations(storedSplit, input.allocations)) throw keyReuse();
         return { id: earlier.id, warning: null, duplicate: true, postDated: false };
       }
     }
@@ -194,7 +256,7 @@ export async function recordEntry(customerId: string, input: LedgerEntryInput, a
     if (input.type !== "CHARGE" && !canTakePayment(customer.status as CustomerStatus, entries > 0)) {
       throw new ApiError(409, "invalid_state", "This account has no balance to change.");
     }
-    if (input.type === "WRITE_OFF") await assertWritableOff(tx, customerId, input, today, before);
+    const allocations = input.type === "WRITE_OFF" ? await planWriteOff(tx, customerId, input, today) : [];
 
     const after = before + effectOnBalance(input.type, input.amountCents);
     const keepsDueDate = input.type === "CHARGE" || input.type === "ADJUSTMENT";
@@ -216,12 +278,23 @@ export async function recordEntry(customerId: string, input: LedgerEntryInput, a
         createdBy: actor.name,
         createdById: actor.id,
         requestKey: input.requestKey ?? null,
+        // The database insists a write-off recorded from now on is allocated to charges in full.
+        allocationsRequired: input.type === "WRITE_OFF",
       },
     });
+    let covers: string | null = null;
+    if (allocations.length > 0) {
+      await tx.writeOffAllocation.createMany({
+        data: allocations.map((allocation) => ({ writeOffEntryId: created.id, chargeEntryId: allocation.chargeId, amountCents: allocation.amountCents })),
+      });
+      // Check the totals now, inside the transaction, so a problem is a clear error here and not a failure at commit.
+      await tx.$executeRaw`SET CONSTRAINTS ALL IMMEDIATE`;
+      covers = await describeCovers(tx, allocations);
+    }
     await writeAudit(tx, {
       customerId,
       action: `ledger.${input.type.toLowerCase()}`,
-      summary: [`${VERB[input.type]} — ${withReference(describeAmount(input.type, input.amountCents), input.reference)}`, input.type === "WRITE_OFF" ? input.note : null]
+      summary: [`${VERB[input.type]} — ${withReference(describeAmount(input.type, input.amountCents), input.reference)}`, input.type === "WRITE_OFF" ? input.note : null, covers]
         .filter(Boolean)
         .join(" — "),
       actor: actor.name,
@@ -291,7 +364,8 @@ export async function reverseEntry(customerId: string, entryId: string, input: R
       if (already.createdById === actor.id && already.note === input.reason) return { id: already.id, duplicate: true };
       throw new ApiError(409, "already_reversed", "That entry has already been reversed.");
     }
-    await assertNoWriteOffDependsOn(tx, customerId, effectOnBalance(type, original.amountCents), today, null);
+    await assertNotCoveredByWriteOff(tx, entryId, "reverse");
+    await assertLegacyWriteOffSafe(tx, customerId, effectOnBalance(type, original.amountCents), today);
 
     const created = await tx.ledgerEntry.create({
       data: {
@@ -339,7 +413,8 @@ export async function voidEntry(customerId: string, entryId: string, reason: str
     await assertVoidable(tx, entry, today);
 
     const type = entry.type as LedgerType;
-    await assertNoWriteOffDependsOn(tx, customerId, effectOnBalance(type, entry.amountCents), today, dbDateToIso(entry.entryDate));
+    await assertNotCoveredByWriteOff(tx, entryId, "void");
+    await assertLegacyWriteOffSafe(tx, customerId, effectOnBalance(type, entry.amountCents), today);
     await tx.ledgerEntry.update({
       where: { id: entryId },
       data: { voidedAt: clock.now(), voidedBy: actor.name, voidedById: actor.id, voidReason: reason },

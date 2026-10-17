@@ -85,6 +85,7 @@ describe("production-only checks", () => {
   test("the sign-in limit overrides used by the test suite are refused in production", () => {
     expect(validateEnvironment({ ...GOOD_PROD_TLS, LOGIN_ATTEMPTS_PER_ADDRESS: "10000" })).toEqual([expect.stringContaining("LOGIN_ATTEMPTS_PER_ADDRESS")]);
     expect(validateEnvironment({ ...GOOD_PROD_TLS, LOGIN_ATTEMPTS_PER_ACCOUNT: "10000" })).toEqual([expect.stringContaining("LOGIN_ATTEMPTS_PER_ACCOUNT")]);
+    expect(validateEnvironment({ ...GOOD_PROD_TLS, LOGIN_FREE_FAILURES: "10000" })).toEqual([expect.stringContaining("LOGIN_FREE_FAILURES")]);
     expect(validateEnvironment({ ...GOOD_DEV, LOGIN_ATTEMPTS_PER_ADDRESS: "10000" })).toEqual([]);
   });
 
@@ -93,6 +94,11 @@ describe("production-only checks", () => {
     delete without.TRUSTED_PROXY_HOPS;
     expect(validateEnvironment(without)).toEqual([expect.stringContaining("TRUSTED_PROXY_HOPS must be set")]);
     expect(validateEnvironment({ ...GOOD_DEV })).toEqual([]);
+  });
+
+  test("production refuses TRUSTED_PROXY_HOPS=0, which would make every visitor one address; development may use it", () => {
+    expect(validateEnvironment({ ...GOOD_PROD_TLS, TRUSTED_PROXY_HOPS: "0" })).toEqual([expect.stringContaining("not allowed in production")]);
+    expect(validateEnvironment({ ...GOOD_DEV, TRUSTED_PROXY_HOPS: "0" })).toEqual([]);
   });
 
   test("TRUSTED_PROXY_HOPS must be a small whole number when set", () => {

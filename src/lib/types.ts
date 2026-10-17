@@ -65,6 +65,12 @@ export interface LedgerEntryDto {
   reversesId: string | null;
   /** True once a reversal has been recorded against this entry. */
   reversed: boolean;
+  /** For a write-off: the charges it gives up on and how much of each. Empty for anything else, and for older write-offs. */
+  covers: Array<{ chargeId: string; amountCents: number }>;
+  /** For a charge: how much of it is written off right now. */
+  writtenOffCents: number;
+  /** For a charge: whether a write-off that is still on the books (live, or reversed since) ever covered it. */
+  everWrittenOff: boolean;
 }
 
 export interface AuditEventDto {

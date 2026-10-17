@@ -70,16 +70,17 @@ legacy/             The original artifact, for reference
 - **Closed months are never rewritten.** A mistake in the current month can be voided. Anything from an earlier month is
   corrected with a **reversal**: a new opposite entry dated today, linked to the original, which stays in the history. An
   entry can be reversed once, and a reversed entry cannot also be voided. A **write-off** gives up on a balance that will
-  not be collected: admin-only, needs a reason, cannot exceed what was owed on its date or today, and cannot be undone by
-  voiding the charge it covers. It is reported separately (customer screen, dashboard, CSV) instead of vanishing into
+  not be collected: admin-only, needs a reason, and is allocated to specific charges (oldest due first, or the ones the admin
+  picks), each within what was open on every day it is in force; those charges cannot be voided or reversed until the
+  write-off is reversed. It is reported separately (customer screen, dashboard, CSV) instead of vanishing into
   "adjustments". Only an admin can post into a closed month, and nobody can date an entry more than 90 days ahead.
 - **Money writes lock the customer row**, so a charge racing a suspension, or two charges racing the credit limit, are
   decided one at a time and the warnings are accurate.
 - **"Today" is the business day.** The server decides it, in `BUSINESS_TIME_ZONE` (default `America/Chicago`), and sends it
   with the data. The browser never supplies a date for this, and history is shown on the same day the books use.
 - **Sign-in:** one error message for every failure (wrong password, unknown user, locked or disabled account), the real
-  reason only in the server log, atomic lockout of staff after 5 failures (customers are never locked: their sign-in name is
-  their email, so a lock would let a stranger lock them out), rate limits per address and per account-and-address, and
+  reason only in the server log, no account lockout, for staff or customers (a sign-in name is easy to learn, so a lock would let a stranger shut a real
+  person out): a doubling wait per address and name instead, rate limits per address and per account-and-address, and
   signing out invalidates the session everywhere.
 - **The dev server listens on 127.0.0.1 only**, because auto-login would otherwise hand a SUPER ADMIN session to anyone
   on the same network.

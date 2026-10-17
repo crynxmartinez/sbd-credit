@@ -38,8 +38,11 @@ export function toCustomerBase(row: Customer): CustomerBase {
   };
 }
 
+/** What a ledger row needs to say which charges a write-off covers. Required, so a query that forgets to load them does not compile. */
+export type WithAllocations = { writeOffAllocations: ReadonlyArray<{ chargeEntryId: string; amountCents: number }> };
+
 export function toLedgerRecord(
-  row: Pick<LedgerEntry, "id" | "type" | "amountCents" | "entryDate" | "dueDate" | "voidedAt" | "reversesEntryId">,
+  row: Pick<LedgerEntry, "id" | "type" | "amountCents" | "entryDate" | "dueDate" | "voidedAt" | "reversesEntryId"> & WithAllocations,
 ): LedgerRecord {
   return {
     id: row.id,
@@ -49,13 +52,14 @@ export function toLedgerRecord(
     dueDate: dbDateToIso(row.dueDate),
     voided: row.voidedAt !== null,
     reverses: row.reversesEntryId,
+    writeOffAllocations: row.writeOffAllocations.map((allocation) => ({ chargeId: allocation.chargeEntryId, amountCents: allocation.amountCents })),
   };
 }
 
 /** A ledger row, plus whether a reversal has been recorded against it. */
-export type LedgerRow = LedgerEntry & { reversedBy: { id: string } | null };
+export type LedgerRow = LedgerEntry & { reversedBy: { id: string } | null } & WithAllocations;
 
-export function toLedgerDto(row: LedgerRow): LedgerEntryDto {
+export function toLedgerDto(row: LedgerRow, cover: { liveCents: number; ever: boolean } = { liveCents: 0, ever: false }): LedgerEntryDto {
   return {
     id: row.id,
     type: row.type as LedgerType,
@@ -72,6 +76,9 @@ export function toLedgerDto(row: LedgerRow): LedgerEntryDto {
     voidReason: row.voidReason,
     reversesId: row.reversesEntryId,
     reversed: row.reversedBy !== null,
+    covers: row.writeOffAllocations.map((allocation) => ({ chargeId: allocation.chargeEntryId, amountCents: allocation.amountCents })),
+    writtenOffCents: cover.liveCents,
+    everWrittenOff: cover.ever,
   };
 }
 

@@ -28,16 +28,17 @@ async function main(): Promise<void> {
       const customers = await tx.customer.findMany({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
       const ledger = await tx.ledgerEntry.findMany({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
       const audit = await tx.auditEvent.findMany({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
+      const writeOffAllocations = await tx.writeOffAllocation.findMany({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
       // Never the password hash, failure counts or lock: a backup holds no credential. Invitation links are not kept either.
       const portalContacts = await tx.customerUser.findMany({
         select: { id: true, customerId: true, email: true, name: true, active: true, sessionVersion: true, lastLoginAt: true, createdBy: true, createdById: true, createdAt: true, updatedAt: true },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
       });
       const users = await tx.appUser.findMany({
-        select: { id: true, username: true, name: true, role: true, active: true },
+        select: { id: true, username: true, name: true, role: true, active: true, sessionVersion: true },
         orderBy: { username: "asc" },
       });
-      return { customers, ledger, audit, users, portalContacts };
+      return { customers, ledger, audit, users, portalContacts, writeOffAllocations };
     },
     // maxWait: how long to wait for a connection to START the transaction. The default is 2 seconds, which a remote database
     // can exceed on a cold connection, and the backup would fail before reading anything.
@@ -49,24 +50,27 @@ async function main(): Promise<void> {
     format: BACKUP_FORMAT,
     schema,
     takenAt: new Date().toISOString(),
-    counts: { customers: snapshot.customers.length, ledger: snapshot.ledger.length, audit: snapshot.audit.length, portalContacts: snapshot.portalContacts.length },
+    counts: { customers: snapshot.customers.length, ledger: snapshot.ledger.length, audit: snapshot.audit.length, portalContacts: snapshot.portalContacts.length, writeOffAllocations: snapshot.writeOffAllocations.length },
     customers: snapshot.customers,
     ledger: snapshot.ledger,
     audit: snapshot.audit,
     portalContacts: snapshot.portalContacts,
+    writeOffAllocations: snapshot.writeOffAllocations,
+    allocationsIncluded: true,
     users: snapshot.users,
   };
 
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const dir = "backups";
-  mkdirSync(dir, { recursive: true });
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
   const finalPath = join(dir, `credit-${schema}-${stamp}.json`);
   const partialPath = `${finalPath}.partial`;
-  writeFileSync(partialPath, JSON.stringify(file, null, 2));
+  // Owner-only: the file holds customer names, contacts, balances and the audit log.
+  writeFileSync(partialPath, JSON.stringify(file, null, 2), { mode: 0o600 });
   renameSync(partialPath, finalPath);
 
   console.log(`backup written: ${finalPath}`);
-  console.log(`  ${file.counts.customers} customers, ${file.counts.ledger} ledger entries, ${file.counts.audit} audit events, ${file.counts.portalContacts} customer contacts, ${file.users.length} users (no password hashes)`);
+  console.log(`  ${file.counts.customers} customers, ${file.counts.ledger} ledger entries, ${file.counts.audit} audit events, ${file.counts.portalContacts} customer contacts, ${file.counts.writeOffAllocations ?? 0} write-off allocations, ${file.users.length} users (no password hashes)`);
 }
 
 main()

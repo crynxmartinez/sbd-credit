@@ -1,11 +1,15 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { ApiClientError } from "@/lib/client/api";
+import { chargeLabel, recordsFromDto } from "@/lib/client/ledger-records";
 import { useBusinessToday, useRecordEntry } from "@/lib/client/queries";
 import { MIN_REASON_LENGTH } from "@/lib/domain/constants";
 import { entryDateProblem, entryDateWindow } from "@/lib/domain/entry-dates";
+import { centsToDecimal } from "@/lib/domain/csv";
 import { formatCents, parseMoneyToCents } from "@/lib/domain/money";
+import { planWriteOffAllocation, writeOffTargets, type Allocation } from "@/lib/domain/write-off";
+import type { LedgerEntryDto } from "@/lib/types";
 import { ledgerEntrySchema } from "@/lib/validation";
 import { useAutoFocus } from "../useAutoFocus";
 import { useToast } from "../Toast";
@@ -18,19 +22,23 @@ const TITLE = { payment: "Record payment", charge: "Add charge", adjustment: "Po
 const DONE = { payment: "Payment recorded.", charge: "Charge added.", adjustment: "Adjustment posted.", writeoff: "Written off." } as const;
 
 type Direction = "increase" | "reduce";
+/** A write-off covers the oldest-due charges by default, or the ones the person picks. */
+type CoverMode = "oldest" | "choose";
 
 interface Props {
   customerId: string;
   kind: EntryKind;
   paymentTerms: string;
-  /** What the customer owes now. A write-off cannot exceed it. */
+  /** What the customer owes now. */
   owedCents: number;
+  /** The customer's ledger: a write-off is allocated to charges in it. */
+  ledger: readonly LedgerEntryDto[];
   /** Only an approved account can be given more credit, so only then may an adjustment raise what is owed. */
   approved: boolean;
   onDone: () => void;
 }
 
-export function EntryForm({ customerId, kind, paymentTerms, owedCents, approved, onDone }: Props) {
+export function EntryForm({ customerId, kind, paymentTerms, owedCents, ledger, approved, onDone }: Props) {
   const { user } = useUi();
   const notify = useToast();
   const record = useRecordEntry(customerId);
@@ -45,9 +53,18 @@ export function EntryForm({ customerId, kind, paymentTerms, owedCents, approved,
   const [error, setError] = useState<string | null>(null);
   // A write-off is hard to take back, so it has a review step: the first press shows what will happen, the second does it.
   const [reviewing, setReviewing] = useState(false);
+  // Which charges a write-off covers. "picked" holds the amount typed for each charge that is ticked.
+  const [mode, setMode] = useState<CoverMode>("oldest");
+  const [picked, setPicked] = useState<Record<string, string>>({});
+  const [reviewedCover, setReviewedCover] = useState<Allocation[]>([]);
   // One key per form. A retry after a lost reply carries the same key, so it cannot record a second payment.
   const [requestKey] = useState(() => crypto.randomUUID());
   const id = `entry-${kind}`;
+  const records = useMemo(() => recordsFromDto(ledger), [ledger]);
+  const entryById = useMemo(() => new Map(ledger.map((entry) => [entry.id, entry])), [ledger]);
+  // Exactly the charges the server will accept for a write-off on this date: the same rule, from the same module.
+  const targets = useMemo(() => (kind === "writeoff" ? writeOffTargets(records, entryDate, today) : []), [kind, records, entryDate, today]);
+  const writableCents = targets.reduce((sum, target) => sum + target.openCents, 0);
   const formRef = useAutoFocus<HTMLFormElement>();
 
   // Any change to what was typed cancels the review, so the summary can never describe something other than what is sent.
@@ -66,8 +83,22 @@ export function EntryForm({ customerId, kind, paymentTerms, owedCents, approved,
     if (cents === null || cents === 0) return setError("Enter an amount in dollars, like 1250 or 1250.75.");
     const dateProblem = entryDateProblem(user.role, entryDate, today) ?? (kind === "writeoff" && entryDate > today ? "A write-off cannot be dated in the future." : null);
     if (dateProblem) return setError(dateProblem);
+    let cover: Allocation[] | undefined;
     if (kind === "writeoff") {
-      if (cents > owedCents) return setError(`You can write off at most ${formatCents(owedCents, { fixed: true })}, which is what is owed.`);
+      if (reviewing && reviewedCover.length > 0) {
+        // The second press sends EXACTLY what the review showed, even if a refresh has since changed what is open: the server
+        // checks it, and says so if it no longer fits. Recomputing here could record a different split than the one approved.
+        cover = reviewedCover;
+      } else {
+        const chosen = mode === "choose" ? Object.entries(picked).map(([chargeId, text]) => ({ chargeId, amountCents: parseMoneyToCents(text) ?? 0 })) : undefined;
+        const plan = planWriteOffAllocation(cents, targets, chosen);
+        if (!plan.ok) {
+          if (plan.code === "nothing_owed") return setError("Nothing is owed, so there is nothing to write off.");
+          if (plan.code === "exceeds_balance") return setError(`You can write off at most ${formatCents(plan.maxCents, { fixed: true })}, which is what is owed.`);
+          return setError("The amounts picked for the charges must add up to the write-off amount, and no charge can take more than is open on it.");
+        }
+        cover = plan.allocations;
+      }
       if (note.trim().length < MIN_REASON_LENGTH) return setError("Say why this is being written off.");
     }
 
@@ -80,10 +111,13 @@ export function EntryForm({ customerId, kind, paymentTerms, owedCents, approved,
       reference,
       note,
       requestKey,
+      // What was reviewed is what is sent, so a payment arriving meanwhile cannot change which charges are covered unseen.
+      ...(cover ? { allocations: cover } : {}),
     });
     if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "Check the amount and dates.");
 
     if (kind === "writeoff" && !reviewing) {
+      setReviewedCover(cover ?? []);
       setReviewing(true);
       return;
     }
@@ -141,7 +175,7 @@ export function EntryForm({ customerId, kind, paymentTerms, owedCents, approved,
           />
           {kind === "writeoff" ? (
             <span className="field-hint" id={`${id}-owed`}>
-              Up to {formatCents(owedCents, { fixed: true })}, which is what is owed.
+              Up to {formatCents(writableCents, { fixed: true })}, which is what is owed.
             </span>
           ) : null}
         </div>
@@ -163,6 +197,62 @@ export function EntryForm({ customerId, kind, paymentTerms, owedCents, approved,
           ) : null}
         </div>
       </div>
+      {kind === "writeoff" ? (
+        <fieldset className="direction">
+          <legend>Which charges does this cover?</legend>
+          <label>
+            <input type="radio" name={`${id}-cover`} checked={mode === "oldest"} onChange={() => edit(setMode)("oldest")} />
+            The oldest charges first
+          </label>
+          <label>
+            <input type="radio" name={`${id}-cover`} checked={mode === "choose"} onChange={() => edit(setMode)("choose")} />
+            I will choose the charges
+          </label>
+          {mode === "choose" ? (
+            targets.length === 0 ? (
+              <span className="field-hint">No charge has anything open on this date.</span>
+            ) : (
+              <ul className="pick-list">
+                {targets.map((target) => {
+                  const label = chargeLabel(entryById.get(target.id));
+                  const on = target.id in picked;
+                  return (
+                    <li key={target.id} className="pick-row">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={(e) => {
+                            setReviewing(false);
+                            setPicked((current) => {
+                              const others = Object.fromEntries(Object.entries(current).filter(([chargeId]) => chargeId !== target.id));
+                              return e.target.checked ? { ...others, [target.id]: centsToDecimal(target.openCents) } : others;
+                            });
+                          }}
+                        />
+                        {label} — {formatCents(target.openCents, { fixed: true })} open
+                      </label>
+                      {on ? (
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          className="pick-amount"
+                          value={picked[target.id]}
+                          aria-label={`Amount to write off on ${label}`}
+                          onChange={(e) => {
+                            setReviewing(false);
+                            setPicked((current) => ({ ...current, [target.id]: e.target.value }));
+                          }}
+                        />
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )
+          ) : null}
+        </fieldset>
+      ) : null}
       {kind === "charge" || kind === "adjustment" ? (
         <div className="col">
           <label htmlFor={`${id}-due`}>Due date (blank uses {paymentTerms})</label>
@@ -189,6 +279,14 @@ export function EntryForm({ customerId, kind, paymentTerms, owedCents, approved,
         <div className="warn-note" role="status">
           This gives up on {formatCents(cents, { fixed: true })} of the {formatCents(owedCents, { fixed: true })} owed. The balance becomes{" "}
           <b>{formatCents(owedCents - cents, { fixed: true })}</b>, and it stops showing as past due. It can be undone only by reversing the write-off.
+          <ul className="pick-list" aria-label="Charges this covers">
+            {reviewedCover.map((item) => (
+              <li key={item.chargeId}>
+                Covers {chargeLabel(entryById.get(item.chargeId))}: {formatCents(item.amountCents, { fixed: true })}
+              </li>
+            ))}
+          </ul>
+          Those charges cannot be voided or reversed until this write-off is reversed.
         </div>
       ) : null}
 

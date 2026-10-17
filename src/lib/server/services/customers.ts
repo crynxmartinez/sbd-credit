@@ -5,6 +5,7 @@ import { can, type Action } from "@/lib/domain/roles";
 import { computeAging } from "@/lib/domain/ledger";
 import { toSummary } from "@/lib/domain/summary";
 import { applyDecision, hasCreditLine } from "@/lib/domain/status";
+import { writeOffCover } from "@/lib/domain/write-off";
 import { formatCents } from "@/lib/domain/money";
 import { dbDateToIso, isoToDbDate } from "@/lib/domain/dates";
 import type { CustomerStatus } from "@/lib/domain/constants";
@@ -44,7 +45,10 @@ export async function listSummaries(asOf: string): Promise<CustomerSummary[]> {
     // Voided entries never affect a balance or an aging bucket, so there is no reason to read them here.
     prisma.ledgerEntry.findMany({
       where: { voidedAt: null },
-      select: { id: true, customerId: true, type: true, amountCents: true, entryDate: true, dueDate: true, voidedAt: true, reversesEntryId: true },
+      select: {
+        id: true, customerId: true, type: true, amountCents: true, entryDate: true, dueDate: true, voidedAt: true, reversesEntryId: true,
+        writeOffAllocations: { select: { chargeEntryId: true, amountCents: true } },
+      },
     }),
   ]);
 
@@ -61,7 +65,10 @@ export async function getDetail(id: string, asOf: string): Promise<CustomerDetai
   const row = await prisma.customer.findUnique({
     where: { id },
     include: {
-      ledger: { include: { reversedBy: { select: { id: true } } }, orderBy: [{ entryDate: "desc" }, { createdAt: "desc" }, { id: "desc" }] },
+      ledger: {
+        include: { reversedBy: { select: { id: true } }, writeOffAllocations: { select: { chargeEntryId: true, amountCents: true } } },
+        orderBy: [{ entryDate: "desc" }, { createdAt: "desc" }, { id: "desc" }],
+      },
       // The id breaks ties between events written in the same millisecond, so history never reshuffles between loads.
       audit: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: AUDIT_HISTORY_LIMIT },
     },
@@ -72,7 +79,7 @@ export async function getDetail(id: string, asOf: string): Promise<CustomerDetai
   return {
     customer: toSummary(toCustomerBase(row), records, asOf),
     aging: computeAging(records, asOf),
-    ledger: row.ledger.map(toLedgerDto),
+    ledger: row.ledger.map((entry) => toLedgerDto(entry, writeOffCover(records, entry.id))),
     audit: row.audit.map(toAuditDto),
   };
 }

@@ -19,11 +19,13 @@ export interface LedgerCsvSource {
   reversed: boolean;
   /** For a reversal, true: it offsets an earlier entry. */
   isReversal: boolean;
+  /** For a write-off, the charges it covers ("INV-1 ($60.00); INV-2 ($40.00)"). Empty for anything else. */
+  writtenOffAgainst: string;
 }
 
 export const LEDGER_CSV_HEADER = [
   "Customer ID", "Business", "Type", "Amount", "Effect on balance", "Counts today", "Entry date", "Due date", "Reference",
-  "Note", "Recorded by", "Voided", "Void reason", "Reversed",
+  "Note", "Recorded by", "Voided", "Void reason", "Reversed", "Written off against",
 ] as const;
 
 /**
@@ -37,6 +39,6 @@ export function ledgerCsvRow(entry: LedgerCsvSource, asOf: string): Array<string
     entry.customerId, entry.businessName, entry.type, centsToDecimal(entry.amountCents),
     centsToDecimal(effectOnBalance(entry.type, entry.amountCents)), counts ? "yes" : "no", entry.entryDate, entry.dueDate ?? "",
     entry.reference ?? "", entry.note ?? "", entry.createdBy, entry.voided ? "yes" : "no", entry.voidReason ?? "",
-    entry.reversed ? "yes" : "no",
+    entry.reversed ? "yes" : "no", entry.writtenOffAgainst,
   ];
 }

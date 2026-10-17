@@ -8,6 +8,7 @@
  *   npm run user -- deactivate <username>
  *   npm run user -- activate <username>
  *   npm run user -- unlock <username>        (clears a lock left by too many wrong passwords)
+ *   npm run user -- end-all-sessions         (signs EVERY staff member and customer out, without changing any secret)
  *
  * The password comes from the NEW_USER_PASSWORD environment variable. If it is not set, a strong random one is made and
  * shown ONCE, here, so it never has to travel through chat or email in a form someone chose in a hurry.
@@ -83,6 +84,21 @@ async function unlock(args: string[]): Promise<void> {
   console.log(`unlocked "${username}"`);
 }
 
+/**
+ * Signs everyone out: bumps the session version of every staff account and customer contact, so every cookie already issued
+ * is refused. Use it after restoring a database-level backup (pg_dump), which brings back the OLD session versions, or after
+ * any suspected theft of a session. (A JSON restore does this by itself.)
+ */
+async function endAllSessions(): Promise<void> {
+  // Never lower than the clock: a plain "one more" can land on a version that a cookie issued before a restore already carries
+  // (see sessionVersionAfterRestore in domain/backup.ts). Seconds since 1970 are above any version an account has reached.
+  const [staff, customers] = await prisma.$transaction([
+    prisma.$executeRaw`UPDATE "AppUser" SET "sessionVersion" = GREATEST("sessionVersion" + 1, floor(extract(epoch from now()))::int)`,
+    prisma.$executeRaw`UPDATE "CustomerUser" SET "sessionVersion" = GREATEST("sessionVersion" + 1, floor(extract(epoch from now()))::int)`,
+  ]);
+  console.log(`ended every session: ${staff} staff account(s) and ${customers} customer contact(s)`);
+}
+
 async function setActive(args: string[], active: boolean): Promise<void> {
   const username = normalizeUsername(args[0] ?? "");
   if (!username) fail(`usage: npm run user -- ${active ? "activate" : "deactivate"} <username>`);
@@ -125,8 +141,10 @@ async function main(): Promise<void> {
       return setActive(args, true);
     case "unlock":
       return unlock(args);
+    case "end-all-sessions":
+      return endAllSessions();
     default:
-      return fail("usage: npm run user -- <list|create|reset-password|deactivate|activate|unlock> ...");
+      return fail("usage: npm run user -- <list|create|reset-password|deactivate|activate|unlock|end-all-sessions> ...");
   }
 }
 

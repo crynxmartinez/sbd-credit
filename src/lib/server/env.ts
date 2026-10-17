@@ -45,7 +45,7 @@ export function validateEnvironment(env: Env): string[] {
   // Overrides that exist only so the automated tests can sign in thousands of times. In production they would switch the
   // sign-in limits off, so a leftover setting is refused rather than obeyed.
   if (production) {
-    for (const name of ["LOGIN_ATTEMPTS_PER_ADDRESS", "LOGIN_ATTEMPTS_PER_ACCOUNT", "ACCEPT_ATTEMPTS_PER_ADDRESS"]) {
+    for (const name of ["LOGIN_ATTEMPTS_PER_ADDRESS", "LOGIN_ATTEMPTS_PER_ACCOUNT", "LOGIN_FREE_FAILURES", "ACCEPT_ATTEMPTS_PER_ADDRESS"]) {
       if (env[name] !== undefined) problems.push(`${name} must not be set in production: it weakens the sign-in limits.`);
     }
   }
@@ -53,6 +53,11 @@ export function validateEnvironment(env: Env): string[] {
   // the entry we trust) or makes everyone share one bucket, so production must say how many proxies there are.
   if (production && env.TRUSTED_PROXY_HOPS === undefined) {
     problems.push("TRUSTED_PROXY_HOPS must be set in production: how many proxies sit in front of the app (usually 1).");
+  }
+  // 0 means "ignore X-Forwarded-For": every visitor then shares ONE address, so a few wrong passwords from anyone would slow
+  // sign-in for everybody (and the per-address limit would block everyone at once).
+  if (production && env.TRUSTED_PROXY_HOPS === "0") {
+    problems.push("TRUSTED_PROXY_HOPS=0 is not allowed in production: every visitor would count as one address. Set the number of proxies in front of the app (usually 1).");
   }
   if (env.TRUSTED_PROXY_HOPS !== undefined && !/^[0-5]$/.test(env.TRUSTED_PROXY_HOPS)) {
     problems.push("TRUSTED_PROXY_HOPS must be a whole number from 0 to 5 (how many proxies sit in front of the app).");

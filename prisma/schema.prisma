@@ -142,10 +142,34 @@ model LedgerEntry {
   reverses        LedgerEntry? @relation("Reversal", fields: [reversesEntryId], references: [id], onDelete: Restrict)
   reversedBy      LedgerEntry? @relation("Reversal")
 
+  /// True on every write-off recorded since allocations existed: the database then insists its allocations add up to its
+  /// amount. False on older write-offs, which the app treats as an ordinary credit.
+  allocationsRequired Boolean @default(false)
+
   auditEvents AuditEvent[]
+
+  /// For a WRITE_OFF: the charges it gives up on (adding up to its amount). Whether they are in force follows the write-off.
+  writeOffAllocations WriteOffAllocation[] @relation("AllocWriteOff")
+  /// For a charge: the write-off allocations that point at it.
+  chargeAllocations   WriteOffAllocation[] @relation("AllocCharge")
 
   @@unique([customerId, requestKey])
   @@index([customerId, entryDate])
+}
+
+/// Append-only: which charge a write-off gives up on, and how much of it. A write-off's rows add up to its amount exactly
+/// (checked by the database when the transaction commits). In force exactly while the write-off is.
+model WriteOffAllocation {
+  id              String      @id @default(cuid())
+  writeOffEntry   LedgerEntry @relation("AllocWriteOff", fields: [writeOffEntryId], references: [id], onDelete: Restrict)
+  writeOffEntryId String
+  chargeEntry     LedgerEntry @relation("AllocCharge", fields: [chargeEntryId], references: [id], onDelete: Restrict)
+  chargeEntryId   String
+  amountCents     Int
+  createdAt       DateTime    @default(now()) @db.Timestamptz(3)
+
+  @@unique([writeOffEntryId, chargeEntryId])
+  @@index([chargeEntryId])
 }
 
 /// Append-only record of who did what. Written in the same transaction as the change it describes.

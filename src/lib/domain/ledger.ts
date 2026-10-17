@@ -19,6 +19,11 @@ export interface LedgerRecord {
   voided: boolean;
   /** For a REVERSAL, the id of the entry it offsets. */
   reverses?: string | null;
+  /**
+   * For a WRITE_OFF, the charges it gives up on and how much of each (adding up to its amount). A write-off with none
+   * (older data) is treated as an ordinary credit, settling the oldest charge first.
+   */
+  writeOffAllocations?: ReadonlyArray<{ chargeId: string; amountCents: number }>;
 }
 
 export interface OpenItem {
@@ -107,8 +112,42 @@ function settledView(entries: readonly LedgerRecord[]): LedgerRecord[] {
   return entries.filter((entry) => !cancelled.has(entry.id) && !(entry.type === "REVERSAL" && entry.reverses && present.has(entry.reverses)));
 }
 
+const allocatedCents = (entry: LedgerRecord): number => sumCents((entry.writeOffAllocations ?? []).map((allocation) => allocation.amountCents));
+
+/**
+ * Credits that settle charges oldest-first: payments, reductions, and whatever part of a write-off is NOT allocated to a
+ * charge (all of it, for a write-off from before allocations existed). The allocated part settles exactly the charges it
+ * names instead (see `applyAllocations`), so no write-off is ever dropped from the arithmetic.
+ */
 function creditsTotal(entries: readonly LedgerRecord[]): number {
-  return sumCents(entries.filter((entry) => signedAmount(entry) < 0).map((entry) => -signedAmount(entry)));
+  return sumCents(
+    entries
+      .filter((entry) => signedAmount(entry) < 0)
+      .map((entry) => (entry.type === "WRITE_OFF" ? Math.max(0, entry.amountCents - allocatedCents(entry)) : -signedAmount(entry))),
+  );
+}
+
+/**
+ * Takes each allocated amount off the charge it names, BEFORE the pooled credits are applied. Returns the debits with what
+ * is still to be settled, and any allocated amount that found no charge in view (which goes back into the pool, so what is
+ * owed never disagrees with the balance).
+ */
+function applyAllocations(debits: readonly Debit[], entries: readonly LedgerRecord[]): { debits: Debit[]; unmatchedCents: number } {
+  const allocated = new Map<string, number>();
+  for (const entry of entries) {
+    if (entry.type !== "WRITE_OFF") continue;
+    for (const allocation of entry.writeOffAllocations ?? []) allocated.set(allocation.chargeId, (allocated.get(allocation.chargeId) ?? 0) + allocation.amountCents);
+  }
+  let unmatchedCents = 0;
+  const adjusted = debits.map((debit) => {
+    const wanted = allocated.get(debit.id) ?? 0;
+    allocated.delete(debit.id);
+    const applied = Math.min(wanted, debit.remainingCents);
+    unmatchedCents += wanted - applied;
+    return { ...debit, remainingCents: debit.remainingCents - applied };
+  });
+  for (const leftover of allocated.values()) unmatchedCents += leftover;
+  return { debits: adjusted, unmatchedCents };
 }
 
 /** Applies credits to debits oldest-first. Returns the debits that are still open and the credit left over. */
@@ -130,7 +169,9 @@ function settle(debits: readonly Debit[], credits: number): { open: Debit[]; cre
  */
 export function computeAging(entries: readonly LedgerRecord[], asOf: string): Aging {
   const active = activeEntries(entries).filter((entry) => entry.entryDate <= asOf);
-  const { open, creditLeft } = settle(debitsOf(settledView(active)), creditsTotal(settledView(active)));
+  const view = settledView(active);
+  const { debits, unmatchedCents } = applyAllocations(debitsOf(view), view);
+  const { open, creditLeft } = settle(debits, creditsTotal(view) + unmatchedCents);
 
   const buckets = emptyBuckets();
   let oldestOverdueDays = 0;

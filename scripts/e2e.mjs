@@ -29,6 +29,7 @@ const baseEnv = {
   // The suite signs in far more often than a person would, all from one address. The limiter itself is tested separately.
   LOGIN_ATTEMPTS_PER_ADDRESS: "10000",
   LOGIN_ATTEMPTS_PER_ACCOUNT: "10000",
+  LOGIN_FREE_FAILURES: "10000",
   // Where invitation links point. They are only ever read by the tests, never followed over the network.
   PUBLIC_BASE_URL: `http://127.0.0.1:${PORT}`,
   // The tests read where the app is from here, so the port is chosen in exactly one place.

@@ -53,19 +53,47 @@ beforeEach(() => {
 });
 
 describe("sign-in rate limits", () => {
-  test("one person hammering ONE account from one address is stopped after 10 tries, without calling the password check again", async () => {
-    await failingLogin();
-    const ip = "203.0.113.11";
-    for (let i = 0; i < 10; i += 1) expect((await attempt(POST, "dana@example.com", ip)).status).toBe(401);
-    const blocked = await attempt(POST, "dana@example.com", ip);
-    expect(blocked.status).toBe(429);
-    expect(authenticateAny).toHaveBeenCalledTimes(10);
-  });
-
   test("the same address trying MANY accounts is stopped after 20 tries in total", async () => {
     await failingLogin();
     for (let i = 0; i < 20; i += 1) expect((await attempt(POST, `person${i}@example.com`, "203.0.113.12")).status).toBe(401);
     expect((await attempt(POST, "person99@example.com", "203.0.113.12")).status).toBe(429);
+  });
+
+  test("after a few wrong passwords the next try must WAIT, and the wait is told in seconds (nobody is locked out)", async () => {
+    await failingLogin();
+    const ip = "203.0.113.31";
+    for (let i = 0; i < 4; i += 1) expect((await attempt(POST, "dana4@example.com", ip)).status).toBe(401);
+    const waiting = await attempt(POST, "dana4@example.com", ip);
+    expect(waiting.status).toBe(429);
+    expect(((await waiting.json()) as { error: { message: string } }).error.message).toMatch(/wait \d+ seconds/);
+    expect(authenticateAny).toHaveBeenCalledTimes(4); // the password check is not even run while waiting
+  });
+
+  test("the wait is per ADDRESS and name: a stranger's failures never slow the real person down", async () => {
+    await failingLogin();
+    for (let i = 0; i < 6; i += 1) await attempt(POST, "dana5@example.com", "203.0.113.32"); // the stranger, now waiting
+    expect((await attempt(POST, "dana5@example.com", "203.0.113.32")).status).toBe(429);
+
+    authenticateAny.mockResolvedValueOnce({ kind: "staff", user: { id: "s5", name: "Dana" } });
+    const realPerson = await attempt(POST, "dana5@example.com", "198.51.100.32"); // same name, their own address
+    expect(realPerson.status).toBe(200);
+    expect(startSession).toHaveBeenCalledTimes(1);
+  });
+
+  test("the wait is the same for a name that does not exist, so it tells a guesser nothing", async () => {
+    await failingLogin();
+    for (let i = 0; i < 4; i += 1) await attempt(POST, "no-such-person@example.com", "203.0.113.33");
+    expect((await attempt(POST, "no-such-person@example.com", "203.0.113.33")).status).toBe(429);
+  });
+
+  test("a right password clears the count", async () => {
+    await failingLogin();
+    const ip = "203.0.113.34";
+    for (let i = 0; i < 3; i += 1) await attempt(POST, "dana6@example.com", ip);
+    authenticateAny.mockResolvedValueOnce({ kind: "staff", user: { id: "s6", name: "Dana" } });
+    expect((await attempt(POST, "dana6@example.com", ip)).status).toBe(200);
+    await failingLogin();
+    for (let i = 0; i < 3; i += 1) expect((await attempt(POST, "dana6@example.com", ip)).status).toBe(401); // free again
   });
 
   test("another address is not affected by someone else's limit, and the account is not locked for everybody", async () => {

@@ -16,7 +16,10 @@ export async function getPortalView(user: PortalUser, asOf: string): Promise<Por
     prisma.customer.findUnique({ where: { id: user.customerId } }),
     prisma.ledgerEntry.findMany({
       where: { customerId: user.customerId, voidedAt: null },
-      select: { id: true, type: true, amountCents: true, entryDate: true, dueDate: true, reference: true, voidedAt: true, reversesEntryId: true },
+      select: {
+        id: true, type: true, amountCents: true, entryDate: true, dueDate: true, reference: true, voidedAt: true, reversesEntryId: true,
+        writeOffAllocations: { select: { chargeEntryId: true, amountCents: true } },
+      },
     }),
   ]);
   if (!customer) return null;

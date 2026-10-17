@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type KeyboardEvent } from "react";
+import { useBackGuard } from "@/lib/client/back-guard";
 import { safeHref } from "@/lib/client/links";
 import { ApiClientError } from "@/lib/client/api";
 import { useCustomerDetail } from "@/lib/client/queries";
@@ -44,6 +45,12 @@ export function CustomerDrawer({ id, onClose }: { id: string; onClose: () => voi
     onClose();
   }
   const dialogRef = useDialog(requestClose);
+  // The browser's Back button is a third way out of this drawer, besides the Close button and Escape: ask there too.
+  useBackGuard({
+    active: issuedLink !== null || activeForm !== null,
+    message: () =>
+      issuedLink ? "The invitation link on screen is shown only once and cannot be shown again. Leave anyway?" : "You have a form open that has not been saved. Leave anyway?",
+  });
   const { data, isLoading, isError, error, refetch, dataUpdatedAt } = useCustomerDetail(id);
   const gone = error instanceof ApiClientError && error.status === 404;
   const [tab, setTab] = useState<Tab>("ledger");
@@ -124,7 +131,7 @@ export function CustomerDrawer({ id, onClose }: { id: string; onClose: () => voi
             <>
               {/* A credit line, or ANY account that still owes or is owed money (a denied or reopened customer who has not paid). */}
               {showsCreditPanel(customer.status, customer.balanceCents) ? (
-                <CreditPanel customer={customer} active={activeForm} setActive={setActiveForm} />
+                <CreditPanel customer={customer} ledger={data.ledger} active={activeForm} setActive={setActiveForm} />
               ) : null}
               <DecisionPanel customer={customer} active={activeForm} setActive={setActiveForm} />
               {can(user.role, "portal.manage") && canInviteTo(customer.status) ? <PortalAccessPanel customerId={customer.id} issued={issuedLink} onIssuedChange={setIssuedLink} /> : null}

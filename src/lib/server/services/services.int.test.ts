@@ -530,7 +530,10 @@ describe("write-offs", () => {
     const detail = await getDetail(id, TODAY);
     expect(detail.customer).toMatchObject({ balanceCents: 300_00, writtenOffCents: 200_00 });
     expect(detail.ledger.find((e) => e.type === "WRITE_OFF")).toMatchObject({ amountCents: 200_00, note: reason });
-    expect(detail.audit.find((e) => e.action === "ledger.write_off")?.summary).toBe(`Written off — $200.00 — ${reason}`);
+    // The history also says which charge the write-off covered.
+    const summary = detail.audit.find((e) => e.action === "ledger.write_off")?.summary ?? "";
+    expect(summary.startsWith(`Written off — $200.00 — ${reason} — covers a charge of $500.00 dated `)).toBe(true);
+    expect(summary.endsWith("($200.00)")).toBe(true);
   });
 
   test("cannot write off more than is owed, or anything when nothing is owed, or on a future date", async () => {

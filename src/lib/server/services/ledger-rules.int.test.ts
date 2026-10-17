@@ -72,9 +72,11 @@ describe("a write-off must be covered by what is owed", () => {
     await expectApiError(reverseEntry(id, chargeId, { reason: "Wrong customer" }, ADMIN), 409, "write_off_covers");
     expect((await getDetail(id, TODAY)).customer).toMatchObject({ balanceCents: 0, writtenOffCents: 100_00 });
 
-    // The order that works: undo the write-off first, then correct the charge.
+    // The order that works: undo the write-off first, then correct the charge. A void would erase the charge from the days the
+    // write-off was in force, so once a write-off has covered a charge the charge is reversed, never voided.
     await reverseEntry(id, writeOffId, { reason: "It was collected after all" }, ADMIN);
-    await voidEntry(id, chargeId, "Typo", ADMIN);
+    await expectApiError(voidEntry(id, chargeId, "Typo", ADMIN), 409, "write_off_history");
+    await reverseEntry(id, chargeId, { reason: "Wrong customer" }, ADMIN);
     expect((await getDetail(id, TODAY)).customer).toMatchObject({ balanceCents: 0, writtenOffCents: 0 });
   });
 

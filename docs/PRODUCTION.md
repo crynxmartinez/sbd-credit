@@ -22,7 +22,7 @@ default if it does not match how you run credit.
 | A void is only for entries in the current month; older entries are corrected by a **reversal** dated today, so figures already reported never change. On the 1st, last month is already closed. | Current month | `isInClosedMonth`, `assertVoidable` (`services/ledger.ts`) |
 | Who may post an entry into a closed month | Admins only | `ledger.backdate` in `domain/roles.ts` |
 | How far ahead an entry may be dated | 90 days | `MAX_POSTDATE_DAYS` in `domain/constants.ts` |
-| A write-off | Gives up on the debt: the balance falls and it stops showing as past due. It cannot exceed what is owed on its date AND today, and it cannot be undone by voiding or reversing the charge it covers (reverse the write-off first). The customer sees it as "Credit applied". | `assertWritableOff`, `assertNoWriteOffDependsOn` |
+| A write-off | Gives up on the debt: the balance falls and it stops showing as past due. It is **allocated to specific charges** (oldest-due first, or the ones the admin picks; the amounts add up to the write-off exactly), each within what is open on that charge on every day the write-off is in force. A charge a write-off covers cannot be voided or reversed until the write-off is reversed; one it covered earlier (reversed since) can only be reversed, never voided. The customer sees it as "Credit applied". | `planWriteOff`, `assertNotCoveredByWriteOff`, `domain/write-off.ts` |
 | Available credit | Limit minus balance, never below $0 and never above the limit | `domain/summary.ts` |
 | A payment pays the **oldest due** invoice first (balance-forward). There is no way to apply a payment to a specific invoice. | Oldest due first | `settle` in `domain/ledger.ts` |
 | An approved account's credit limit | Must be above $0. To stop credit, suspend the account | `updateCustomer` |
@@ -56,6 +56,11 @@ below cover that automatically):
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA credit TO credit_app;
 -- Append-only: no updates to the audit log, and no access to the migration history.
 REVOKE UPDATE ON credit."AuditEvent" FROM credit_app;
+-- Write-off allocations are append-only too (a trigger refuses changes anyway; this is the second lock).
+REVOKE UPDATE ON credit."WriteOffAllocation" FROM credit_app;
+-- Only the owner (migrations, restore) runs the one-off allocation function; the running app never needs it.
+REVOKE EXECUTE ON FUNCTION credit.credit_backfill_write_off_allocations() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION credit.credit_backfill_write_off_allocations() TO credit_owner;
 REVOKE ALL ON credit."_prisma_migrations" FROM credit_app;
 -- Staff accounts: the running app only counts failures, ends sessions and records locks. It cannot change a role,
 -- a password or whether an account is active (the account tool, run as credit_owner, does that).
@@ -76,6 +81,7 @@ SELECT count(*) FROM "CustomerUser";                   -- works (a missing grant
 DELETE FROM "LedgerEntry";                             -- permission denied
 TRUNCATE "AuditEvent";                                 -- permission denied
 UPDATE "AuditEvent" SET actor = 'x';                   -- permission denied
+UPDATE "WriteOffAllocation" SET "amountCents" = 1;     -- permission denied
 UPDATE "AppUser" SET role = 'SUPERADMIN';              -- permission denied
 SELECT * FROM public."<one of the shipper app's tables>";  -- permission denied. If this WORKS, the shipper tables are open
                                                        -- to PUBLIC: revoke that for credit_app (REVOKE ALL ... FROM PUBLIC
@@ -112,7 +118,7 @@ Set these on the host. The app refuses to start, and says exactly which is wrong
 | `TRUSTED_PROXY_HOPS` | How many proxies sit in front of the app, 0 to 5 (REQUIRED in production, usually 1; anything else is refused). The proxy MUST set `X-Forwarded-For`: without it every visitor shares one rate-limit bucket, and 20 wrong attempts would block sign-in for everyone. |
 | `NODE_ENV` | `production` |
 
-`CREDIT_DEV_AUTOLOGIN`, `LOGIN_ATTEMPTS_PER_ADDRESS`, `LOGIN_ATTEMPTS_PER_ACCOUNT` and `ACCEPT_ATTEMPTS_PER_ADDRESS` must **not**
+`CREDIT_DEV_AUTOLOGIN`, `LOGIN_ATTEMPTS_PER_ADDRESS`, `LOGIN_ATTEMPTS_PER_ACCOUNT`, `LOGIN_FREE_FAILURES` and `ACCEPT_ATTEMPTS_PER_ADDRESS` must **not**
 be set in production: they exist for the automated tests, and the app refuses to start if they are present.
 
 **Sessions.** Staff sessions last 12 hours and customer sessions 4, from sign-in, and are not extended while working. Each
@@ -154,8 +160,8 @@ advisories in the production audit, and they are not code the running app execut
    ```
 
    A strong one-time password is generated and shown once, unless `NEW_USER_PASSWORD` is set. `list`, `reset-password`,
-   `deactivate`, `activate` and `unlock` work the same way. **`unlock`** is how an administrator lets someone back in after
-   the account was locked by repeated wrong passwords (anyone who knows a username can lock it for 15 minutes).
+   `deactivate` and `activate` work the same way. (`unlock` only clears a lock that was set by hand or left by an older version:
+   wrong passwords never lock an account any more.)
 
 **Customers.** On an approved customer, an admin chooses "Add a person", copies the one-time link and sends it. The link works
 once, lasts 7 days (a reset link 2), and is shown only once. If it is lost, "New link" makes another and cancels the old one.
@@ -167,7 +173,7 @@ There are two kinds, and they hold different things.
 | | Holds | Does NOT hold | Use it for |
 | --- | --- | --- | --- |
 | **`pg_dump -Fc -n credit`** | Everything, including password hashes and invitation records | | Disaster recovery. Treat as a secret. |
-| **`backup.ts`** (JSON) | Customers, ledger, audit, customer contacts, sign-in account list | Any password hash or invitation link | A portable, inspectable copy; restoring into a fresh schema |
+| **`backup.ts`** (JSON) | Customers, ledger, audit, write-off allocations, customer contacts, sign-in account list | Any password hash or invitation link | A portable, inspectable copy; restoring into a fresh schema |
 
 - **Nightly** `pg_dump` to storage the app cannot reach, plus the host's point-in-time recovery if it offers it. Suggested
   retention: 14 daily and 12 monthly copies.
@@ -190,6 +196,13 @@ There are two kinds, and they hold different things.
 
   Sign-in accounts come back with their original ids but **without passwords** (set each with `reset-password`), and customer
   contacts come back "invited" (send each a new link).
+  A backup from before write-offs named their charges has no allocations section: the restore allocates those write-offs itself
+  (oldest-due first, as the migration did). The restore drill proves both paths.
+
+  **Every session from before the restore ends by itself** (each account's session version is set above anything it could have reached, taken from the clock), staff and
+  customers alike. A database-level restore (`pg_restore`) brings back the OLD session versions instead, so after one run
+  `npm run user -- end-all-sessions` (against production: `NODE_ENV=production DATABASE_URL=<...> npx tsx scripts/users.ts
+  end-all-sessions`).
 - **Restore drill.** A backup nobody has restored is a hope. `npm run restore-drill` (development and test schemas only) backs
   up a schema, restores it into a scratch schema, backs that up again and compares every row. It runs in CI on every change.
   For production, restore a `pg_dump` into a scratch **database** at least once before launch and then on a schedule
@@ -209,7 +222,8 @@ There are two kinds, and they hold different things.
   works with the new schema as long as the migration only added things.
   **Exception:** once any write-off or reversal has been recorded (migration `20261015090000_writeoff_reversal`), do not roll the
   app back to a version older than that migration. It does not know those entry types and would add them to balances with
-  the wrong sign.
+  the wrong sign. Likewise, once a write-off has been recorded after `20261018090000_write_off_allocations`, an older app would
+  treat it as an ordinary credit (settling the oldest charge) and would not know which charges it covers.
 - **Migrations that rewrite tables.** `20261014090000_hardening` converts timestamp columns on four tables, which locks them
   for the duration. It is instant on small tables; on a large `AuditEvent` run it in a quiet window.
 - **Sessions**: to sign everyone out immediately, rotate `SESSION_SECRET` (section 3). To sign out one person,
@@ -226,8 +240,7 @@ is written; the name typed into the sign-in box is never logged. Every error sho
 | `startup.ok` / `startup.invalid_environment` | info / error | The configuration was accepted, or the list of what is wrong |
 | `startup.database_not_ready` | warn | The first database connection failed at startup (the health check reports it) |
 | `auth.login_ok` / `auth.login_failed` | info / warn | A sign-in. A failure carries the **reason** (`bad_password`, `unknown`, `inactive`, `not_invited`, `locked`, `ambiguous`), the account kind and the address. The person is never told which. |
-| `auth.locked` | warn | A staff account was locked by repeated wrong passwords (use `unlock` if it was not them) |
-| `portal.many_failed_logins` | warn | A customer account has had a multiple of 30 failures. Customers are never locked, so this is how a guessing run is noticed |
+| `auth.many_failed_logins` | warn | An account (`kind` staff or customer) has had 10 wrong passwords within 15 minutes, from any number of addresses (once per 15 minutes per account). Nobody is locked out by failures, so this is how a guessing run is noticed |
 | `api.refused` | warn | A 403, 429 or 503 was returned (a blocked origin usually means a proxy misconfiguration; many 429s mean a guessing run) |
 | `tx.connection_problem` / `api.database_unreachable` | warn | A write or read could not complete because of the connection (`outcome`: `not_saved` or `unknown_outcome`) |
 | `api.unhandled_error` / `request.unhandled_error` | error | A bug. Each has a reference |
@@ -237,7 +250,7 @@ is written; the name typed into the sign-in box is never logged. Every error sho
 
 - Point an uptime monitor at `/api/health` (503 if the database is unreachable). It is public, queries the database, and is not
   rate-limited by the app: rate-limit it at the proxy.
-- Alert on any `"level":"error"` line, on bursts of `auth.login_failed`, and on `auth.locked`.
+- Alert on any `"level":"error"` line, on bursts of `auth.login_failed`, and on `auth.many_failed_logins`.
 - Also watch Postgres `max_connections` headroom (shared with the shipper app) and disk.
 - Error-reporting services (Sentry and similar) are a deliberate choice, not a default: they receive stack traces from
   a system that handles customer financial data. If you add one, send only the error reference and stack, never request
@@ -246,7 +259,7 @@ is written; the name typed into the sign-in box is never logged. Every error sho
 **Incidents.**
 - *Database down*: people see "can't reach its database" (reads) or "busy / interrupted" (writes). Nothing is lost. A write
   that says "may or may not have been saved" should be checked in the customer's record before it is entered again.
-- *An admin is locked out*: `scripts/users.ts unlock <username>` as `credit_owner`.
+- *An admin cannot sign in*: nobody is locked by wrong passwords, so it is a forgotten password (`reset-password`), a disabled account (`activate`), or a short wait after several wrong tries from their own address (it ends by itself within 15 minutes). `unlock` clears a lock that was set by hand or left by an older version.
 - *A customer lost their invitation link*: "New link" on that person. It cancels the old one.
 - *Suspected leaked session secret or stolen session*: rotate `SESSION_SECRET`; for a stolen customer session, turn that
   contact's access off and on.
@@ -268,9 +281,18 @@ did what. Decide and write down: how long closed accounts are kept, who may see 
 
 ## 9. Known limits and what to do about them
 
-- **Rate limits are per server process.** With several instances each has its own count. Customers are never locked by wrong
-  passwords (their sign-in name is their email, so any lock would let a stranger lock them out); staff accounts are locked for
-  15 minutes after 5 wrong passwords, which also means anyone who knows a username can do the same, hence `unlock`.
+- **Rate limits and sign-in waits are per server process.** With several instances each has its own count, so a guesser gets
+  that many times the allowance. Nobody (staff or customer) is locked by wrong passwords: a sign-in name is not a secret, so any
+  lock would let a stranger shut a real person out. Instead, after 3 wrong passwords from one address for one name, the next try
+  must wait 2 seconds, then 4, 8 and so on up to 15 minutes. That wait belongs to that address and name only, so it slows the guesser
+  and not the real person on their own address. On top of that: 20 tries per address per 10 minutes and 10 per address and name per 15.
+  Know the limits of that design: (1) people behind ONE public address (an office) share a bucket, so a colleague who types several
+  wrong passwords against someone's username makes that person wait up to 15 minutes from the office (not from anywhere else);
+  (2) a guesser who has many addresses (a whole IPv6 /48, a botnet) is slowed per address only; what limits them is the cost of
+  each password check (about 6 a second server-wide), the 12-character minimum, and the `auth.many_failed_logins` alert, which
+  fires after 10 wrong passwords against one account within 15 minutes whatever the addresses. Act on it: reset that password,
+  block the addresses at the proxy. `TRUSTED_PROXY_HOPS` must be the true number of proxies (0 is refused in production), or every
+  visitor looks like one address.
 - **The customer list is computed in memory on each request, and every open tab asks every 30 seconds.** Comfortable below
   roughly 1,000 customers or 10,000 ledger entries. Beyond that, in order: (1) send an `ETag` and answer "unchanged" without
   recomputing (needs a per-customer revision counter, not `max(updatedAt)`, which can miss a late-committing transaction);
@@ -283,11 +305,8 @@ did what. Decide and write down: how long closed accounts are kept, who may see 
   exceed about one every two seconds, for example after inviting hundreds of customers at once.
 - **Staff cannot change their own password**, and neither can customers; an administrator resets it (`reset-password`, or "New
   link"). A self-service change and "forgot password" by email need an email service, which does not exist yet.
-- **After ANY restore, change `SESSION_SECRET`.** Restored customer sign-ins are ended automatically, but a staff session cookie
-  from before the restore (up to 12 hours old) would still be accepted for any staff account that did not sign out. A new
-  secret signs everyone out, which is what you want after an incident. Do not skip it.
-- **Pressing the browser Back button closes the customer panel without asking**, even with a half-typed form or a just-issued
-  invitation link on screen (the Close button and Escape do ask). The link can be re-issued with "New link".
-- **A write-off is matched to charges by date, not by which charge it was "for".** Several entries on the same day have no
-  order, so a write-off and a charge dated the same day cannot be told apart. The void and reverse checks (a charge a write-off
-  covers cannot be voided until the write-off is reversed) work on dates and today's balance.
+- **Write-offs from before allocations existed** (migration `20261018090000_write_off_allocations`) were allocated to charges by
+  that migration, oldest-due first, the way the app would have. If one could not be (later payments had over-paid, or it exceeded
+  every charge), it stays unallocated: the app counts it as an ordinary credit, so no balance changes, and correcting a charge
+  while one exists must leave today's balance at or above zero. The migration's notices list any such write-off.
+  `SELECT credit_backfill_write_off_allocations();` runs the allocation again (it only touches write-offs with none).

@@ -3,18 +3,19 @@
 import { formatCents } from "@/lib/domain/money";
 import { formatDate } from "@/lib/domain/dates";
 import { can } from "@/lib/domain/roles";
-import type { CustomerSummary } from "@/lib/types";
+import type { CustomerSummary, LedgerEntryDto } from "@/lib/types";
 import { UtilBar } from "../ui";
 import { useUi } from "../ui-context";
 import { EntryForm, type EntryKind } from "./EntryForm";
 
 interface Props {
   customer: CustomerSummary;
+  ledger: readonly LedgerEntryDto[];
   active: string | null;
   setActive: (form: string | null) => void;
 }
 
-export function CreditPanel({ customer, active, setActive }: Props) {
+export function CreditPanel({ customer, ledger, active, setActive }: Props) {
   const { user } = useUi();
   const approved = customer.status === "approved";
   const entryKind = (["payment", "charge", "adjustment", "writeoff"] as const).find((kind) => kind === active) as EntryKind | undefined;
@@ -88,6 +89,7 @@ export function CreditPanel({ customer, active, setActive }: Props) {
           kind={entryKind}
           paymentTerms={customer.paymentTerms}
           owedCents={customer.balanceCents}
+          ledger={ledger}
           approved={approved}
           onDone={() => setActive(null)}
         />

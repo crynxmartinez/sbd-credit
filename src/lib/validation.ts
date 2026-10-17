@@ -102,8 +102,13 @@ export const ledgerEntrySchema = z
     reference: optionalText(60),
     note: optionalText(500),
     requestKey,
+    /** Only for a write-off: which charges it gives up on. Left out, the oldest-due charges are covered first. */
+    allocations: z.array(z.object({ chargeId: z.string().min(1).max(64), amountCents: z.number().int().positive().max(MAX_AMOUNT_CENTS) })).max(200).optional(),
   })
   .superRefine((entry, ctx) => {
+    if (entry.allocations !== undefined && entry.type !== "WRITE_OFF") {
+      ctx.addIssue({ code: "custom", path: ["allocations"], message: "Only a write-off is allocated to charges." });
+    }
     if (entry.type === "ADJUSTMENT" && entry.amountCents === 0) {
       ctx.addIssue({ code: "custom", path: ["amountCents"], message: "An adjustment cannot be zero." });
     }

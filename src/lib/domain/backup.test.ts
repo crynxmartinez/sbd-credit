@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { BACKUP_FORMAT, inBatches, reviveBackup } from "./backup";
+import { BACKUP_FORMAT, inBatches, reviveBackup, sessionVersionAfterRestore } from "./backup";
 
 function file(overrides: Record<string, unknown> = {}) {
   return {
@@ -94,8 +94,8 @@ describe("customer portal contacts in a backup", () => {
   });
 
   test("the session version goes UP by one, so a cookie issued before the backup can never be accepted again", () => {
-    expect(reviveBackup(withContacts()).portalContacts[0]!.sessionVersion).toBe(5);
-    expect(reviveBackup(withContacts([{ ...contact, sessionVersion: undefined }])).portalContacts[0]!.sessionVersion).toBe(2);
+    expect(reviveBackup(withContacts(), 0).portalContacts[0]!.sessionVersion).toBe(5);
+    expect(reviveBackup(withContacts([{ ...contact, sessionVersion: undefined }]), 0).portalContacts[0]!.sessionVersion).toBe(2);
   });
 
   test("a backup row can never carry a credential into a restore, whatever the file says", () => {
@@ -125,7 +125,83 @@ describe("sign-in accounts in a backup", () => {
   });
 
   test("keep their original id, role and active flag, and never carry a credential", () => {
-    const revived = reviveBackup(file({ users: [{ ...user, passwordHash: "x", failedLogins: 3 }] })).users;
-    expect(revived).toEqual([user]);
+    const revived = reviveBackup(file({ users: [{ ...user, sessionVersion: 3, passwordHash: "x", failedLogins: 3 }] }), 0).users;
+    expect(revived).toEqual([{ ...user, sessionVersion: 4 }]);
+    expect(JSON.stringify(revived)).not.toContain("passwordHash");
+  });
+
+  test("come back with their session version raised by one, so a cookie from before the restore is refused", () => {
+    expect(reviveBackup(file({ users: [{ ...user, sessionVersion: 7 }] }), 0).users[0]!.sessionVersion).toBe(8);
+    // An older backup has no version: the account's default is 1, so the restored one is 2.
+    expect(reviveBackup(file({ users: [user] }), 0).users[0]!.sessionVersion).toBe(2);
+    expect(reviveBackup(file({ users: [{ ...user, sessionVersion: "x" }] }), 0).users[0]!.sessionVersion).toBe(2);
+  });
+});
+
+describe("write-off allocations in a backup", () => {
+  const writeOff = { id: "l2", customerId: "c1", type: "WRITE_OFF", entryDate: "2026-10-06T00:00:00.000Z", dueDate: null, createdAt: "2026-10-06T10:00:00.000Z", voidedAt: null, allocationsRequired: true };
+  const allocation = { id: "a1", writeOffEntryId: "l2", chargeEntryId: "l1", amountCents: 100, createdAt: "2026-10-06T10:00:01.000Z" };
+  const withAllocations = (rows: unknown[] = [allocation], counts: Record<string, number> = {}) => {
+    const base = file();
+    return file({
+      ledger: [...base.ledger, writeOff],
+      writeOffAllocations: rows,
+      counts: { customers: 1, ledger: 2, audit: 1, writeOffAllocations: rows.length, ...counts },
+    });
+  };
+
+  test("are carried, with their dates restored, and the file says it had the section", () => {
+    const revived = reviveBackup(withAllocations());
+    expect(revived.allocationsIncluded).toBe(true);
+    expect(revived.writeOffAllocations).toHaveLength(1);
+    expect(revived.writeOffAllocations[0]!.createdAt).toBeInstanceOf(Date);
+    expect(revived.counts.writeOffAllocations).toBe(1);
+  });
+
+  test("an older backup has no section: that is not a damaged file, and the restore is told to allocate", () => {
+    const revived = reviveBackup(file());
+    expect(revived.allocationsIncluded).toBe(false);
+    expect(revived.writeOffAllocations).toEqual([]);
+  });
+
+  test("an empty section is NOT the same as a missing one: nothing needs allocating", () => {
+    const revived = reviveBackup(withAllocations([], { ledger: 2 }));
+    expect(revived.allocationsIncluded).toBe(true);
+    expect(revived.writeOffAllocations).toEqual([]);
+  });
+
+  test("is refused when the count disagrees or an allocation points at an entry that is not in the backup", () => {
+    expect(() => reviveBackup(withAllocations([allocation], { writeOffAllocations: 4 }))).toThrow(/incomplete.*writeOffAllocations/);
+    expect(() => reviveBackup(withAllocations([{ ...allocation, chargeEntryId: "ghost" }]))).toThrow(/writeOffAllocations\[0\]/);
+    expect(() => reviveBackup(withAllocations([{ ...allocation, writeOffEntryId: "ghost" }]))).toThrow(/writeOffAllocations\[0\]/);
+  });
+});
+
+describe("sessionVersionAfterRestore", () => {
+  const NOW = Date.UTC(2026, 9, 18, 12, 0, 0); // a real clock reading, in milliseconds
+  const SECONDS = Math.floor(NOW / 1000);
+
+  test("is one higher than the backed-up version when that is already ahead of the clock", () => {
+    expect(sessionVersionAfterRestore(SECONDS + 50, NOW)).toBe(SECONDS + 51);
+  });
+
+  test("is never lower than the clock, so no version an earlier life of the account could have reached is reused", () => {
+    // A backup taken at version 5, then people signed out and in (6, 7...) and a cookie at 6 or 7 exists. A plain +1 would revive it.
+    expect(sessionVersionAfterRestore(5, NOW)).toBe(SECONDS);
+    expect(sessionVersionAfterRestore(6, NOW)).toBe(SECONDS);
+    expect(sessionVersionAfterRestore(undefined, NOW)).toBe(SECONDS);
+    expect(sessionVersionAfterRestore("nonsense", NOW)).toBe(SECONDS);
+  });
+
+  test("is applied to staff accounts and customer contacts alike", () => {
+    const file1 = file({ users: [{ id: "u1", username: "dana", name: "Dana", role: "ADMIN", active: true, sessionVersion: 6 }] });
+    expect(reviveBackup(file1, NOW).users[0]!.sessionVersion).toBe(SECONDS);
+    const contact = { id: "p9", customerId: "c1", email: "x@example.com", name: "X", active: true, sessionVersion: 4 };
+    const withContact = file({ portalContacts: [contact], counts: { customers: 1, ledger: 1, audit: 1, portalContacts: 1 } });
+    expect(reviveBackup(withContact, NOW).portalContacts[0]!.sessionVersion).toBe(SECONDS);
+  });
+
+  test("fits the database column (a 32-bit integer) for decades", () => {
+    expect(SECONDS).toBeLessThan(2 ** 31 - 1);
   });
 });

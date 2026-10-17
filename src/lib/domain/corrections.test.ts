@@ -22,6 +22,18 @@ describe("correctionFor", () => {
     expect(correctionFor(entry({ type: "REVERSAL" }), TODAY, "ADMIN")).toBeNull();
   });
 
+  test("a charge that a write-off covers cannot be corrected until the write-off is reversed", () => {
+    expect(correctionFor(entry({ writtenOffCents: 1 }), TODAY, "ADMIN")).toBeNull();
+    expect(correctionFor(entry({ writtenOffCents: 50_00, entryDate: "2026-09-01" }), TODAY, "SUPERADMIN")).toBeNull();
+    expect(correctionFor(entry({ writtenOffCents: 0 }), TODAY, "ADMIN")).toBe("void");
+  });
+
+  test("a charge a write-off covered earlier (since reversed) is reversed, never voided, even this month", () => {
+    expect(correctionFor(entry({ everWrittenOff: true }), TODAY, "ADMIN")).toBe("reverse");
+    expect(correctionFor(entry({ everWrittenOff: true }), TODAY, "EMPLOYEE")).toBeNull();
+    expect(correctionFor(entry({ everWrittenOff: true, writtenOffCents: 10 }), TODAY, "ADMIN")).toBeNull(); // still covered now
+  });
+
   test("matches what the service permits for every role", () => {
     for (const role of ["EMPLOYEE", "ADMIN", "SUPERADMIN"] as const) {
       for (const entryDate of ["2026-10-01", "2026-09-30"]) {

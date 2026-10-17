@@ -7,7 +7,10 @@ import { ApiError } from "../http";
 import { prisma } from "../db";
 import { log } from "../log";
 import { createHashSlots, HashQueueFull } from "./hash-slots";
-import { LOCKOUT_MS, MAX_FAILED_LOGINS, afterSuccess, isLocked, shouldAlertOnCustomerFailures } from "./lockout";
+import { afterSuccess, createFailureWatch, isLocked } from "./lockout";
+
+/** Notices a run of wrong passwords against one account, from however many addresses. */
+const failureWatch = createFailureWatch();
 
 /** At most this many password checks at once, and a few waiting. See hash-slots.ts for why. */
 const hashSlots = createHashSlots({ slots: 4, maxQueue: 24 });
@@ -45,36 +48,19 @@ export class LoginFailure extends ApiError {
 export type Authenticated = { kind: "staff"; user: AppUser } | { kind: "customer"; user: CustomerUser };
 
 /**
- * Counts a wrong password and locks the account at the limit, all in ONE statement. Reading the count, deciding, then
- * writing would let a burst of parallel guesses all see the old count and slip past the limit (or, just after a lock
- * expires, all restart the count at 1 and never re-lock).
+ * Counts a wrong password on the account, in ONE atomic statement (a burst of parallel guesses must each be counted), and
+ * logs a long run of failures. There is deliberately NO lock, for staff or customers: a sign-in name is easy to learn, so a
+ * lock would let a stranger shut a real person out. What slows a guesser is the per-(address, name) wait in the sign-in
+ * route; see lockout.ts.
  */
-async function recordStaffFailure(user: Pick<AppUser, "id">, now: Date): Promise<void> {
-  const until = new Date(now.getTime() + LOCKOUT_MS);
-  const [after] = await prisma.$queryRaw<{ failedLogins: number }[]>`
-    UPDATE "AppUser" SET
-      "failedLogins" = CASE WHEN "lockedUntil" IS NOT NULL AND "lockedUntil" <= ${now} THEN 1 ELSE "failedLogins" + 1 END,
-      "lockedUntil" = CASE
-        WHEN (CASE WHEN "lockedUntil" IS NOT NULL AND "lockedUntil" <= ${now} THEN 1 ELSE "failedLogins" + 1 END) >= ${MAX_FAILED_LOGINS} THEN ${until}
-        WHEN "lockedUntil" IS NOT NULL AND "lockedUntil" <= ${now} THEN NULL
-        ELSE "lockedUntil" END
-    WHERE "id" = ${user.id}
-    RETURNING "failedLogins"`;
-  // The failure that reaches the limit is the one that locked the account: someone should hear about it.
-  if (after?.failedLogins === MAX_FAILED_LOGINS) log("warn", "auth.locked", { kind: "staff", userId: user.id, until: until.toISOString() });
-}
-
-/**
- * Counts a wrong password for a customer. There is deliberately NO lock: anyone who knows a customer's email could use it
- * to lock them out. See lockout.ts for what protects them instead. A long run of failures is logged.
- */
-async function recordCustomerFailure(user: Pick<CustomerUser, "id">): Promise<void> {
-  const { failedLogins } = await prisma.customerUser.update({
-    where: { id: user.id },
-    data: { failedLogins: { increment: 1 } },
-    select: { failedLogins: true },
-  });
-  if (shouldAlertOnCustomerFailures(failedLogins)) log("warn", "portal.many_failed_logins", { customerUserId: user.id, failedLogins });
+async function recordFailure(candidate: Authenticated): Promise<void> {
+  const [row] =
+    candidate.kind === "staff"
+      ? await prisma.$queryRaw<{ failedLogins: number }[]>`UPDATE "AppUser" SET "failedLogins" = "failedLogins" + 1 WHERE "id" = ${candidate.user.id} RETURNING "failedLogins"`
+      : await prisma.$queryRaw<{ failedLogins: number }[]>`UPDATE "CustomerUser" SET "failedLogins" = "failedLogins" + 1 WHERE "id" = ${candidate.user.id} RETURNING "failedLogins"`;
+  if (row && failureWatch.record(candidate.user.id)) {
+    log("warn", "auth.many_failed_logins", { kind: candidate.kind, userId: candidate.user.id, failedLogins: row.failedLogins });
+  }
 }
 
 /** One password check, through the cap on how many run at once. A flood is refused instead of stalling every other request. */
@@ -128,11 +114,12 @@ export async function authenticateAny(identifier: string, password: string, now:
 
   if (!candidate || !usable || locked || !matches) {
     if (candidate && usable && !locked && !matches) {
-      await (candidate.kind === "staff" ? recordStaffFailure(candidate.user, now) : recordCustomerFailure(candidate.user));
+      await recordFailure(candidate);
     }
     throw new LoginFailure(failureReason({ candidate, staff, customer, usable, locked }), candidate?.kind ?? null, candidate?.user.id ?? null);
   }
 
+  failureWatch.clear(candidate.user.id);
   if (candidate.kind === "staff") {
     await prisma.appUser.update({ where: { id: candidate.user.id }, data: afterSuccess() });
   } else {
