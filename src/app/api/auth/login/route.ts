@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { startCustomerSession } from "@/lib/server/auth/customer-session";
 import { startSession } from "@/lib/server/auth/current-user";
-import { addressBucket, clientAddress, trustedHopsFromEnv } from "@/lib/server/auth/client-address";
+import { addressBucket, clientAddress, forwardedAddressMissing, trustedHopsFromEnv } from "@/lib/server/auth/client-address";
 import { attemptLimit } from "@/lib/server/auth/limits";
 import { authenticateAny, LoginFailure } from "@/lib/server/auth/login";
 import { createRateLimiter } from "@/lib/server/auth/rate-limit";
@@ -35,6 +35,15 @@ const accountLimiter = createRateLimiter({ limit: ATTEMPTS_PER_ACCOUNT_AND_ADDRE
 const failureThrottle = createLoginThrottle({ freeFailures: FREE_FAILURES_PER_ACCOUNT_AND_ADDRESS });
 const TRUSTED_HOPS = trustedHopsFromEnv(process.env.TRUSTED_PROXY_HOPS);
 
+/** Said at most once a minute: it means the proxy is not sending the client address, so the limits cannot tell visitors apart. */
+let lastNoAddressWarning = 0;
+function warnNoAddress(): void {
+  const now = Date.now();
+  if (now - lastNoAddressWarning < 60_000) return;
+  lastNoAddressWarning = now;
+  log("error", "auth.no_client_address", { hint: "The proxy sent no X-Forwarded-For: every visitor shares one sign-in limit. Fix the proxy or TRUSTED_PROXY_HOPS." });
+}
+
 const tooSoon = (retryAfterMs: number) =>
   new ApiError(429, "rate_limited", `Too many attempts. Please wait ${Math.max(1, Math.ceil(retryAfterMs / 1000))} seconds before trying again.`);
 const tooMany = () => new ApiError(429, "rate_limited", "Too many attempts. Please wait a few minutes and try again.");
@@ -43,6 +52,7 @@ export function POST(request: NextRequest) {
   return route(async () => {
     assertSameOrigin(request);
     // An IPv6 /64 is one bucket: a person has billions of addresses inside it, and counting each separately would be no limit.
+    if (production && forwardedAddressMissing(request.headers, TRUSTED_HOPS)) warnNoAddress();
     const address = addressBucket(clientAddress(request.headers, TRUSTED_HOPS));
     if (!addressLimiter.take(address)) throw tooMany();
 
@@ -63,6 +73,8 @@ export function POST(request: NextRequest) {
     } catch (error) {
       // The reason is for the operator only. The identifier typed is never logged: people paste passwords into that box.
       if (error instanceof LoginFailure) log("warn", "auth.login_failed", { reason: error.reason, kind: error.kind, userId: error.userId, address });
+      // A busy server or an unreachable database is not a wrong password: do not build a wait out of it.
+      else failureThrottle.forgive(accountKey);
       throw error;
     }
     failureThrottle.succeed(accountKey);
@@ -74,5 +86,5 @@ export function POST(request: NextRequest) {
     }
     await startCustomerSession(who.user);
     return ok({ kind: "customer" as const, name: who.user.name });
-  });
+  }, { request });
 }

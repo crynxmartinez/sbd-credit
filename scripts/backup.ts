@@ -50,7 +50,7 @@ async function main(): Promise<void> {
     format: BACKUP_FORMAT,
     schema,
     takenAt: new Date().toISOString(),
-    counts: { customers: snapshot.customers.length, ledger: snapshot.ledger.length, audit: snapshot.audit.length, portalContacts: snapshot.portalContacts.length, writeOffAllocations: snapshot.writeOffAllocations.length },
+    counts: { customers: snapshot.customers.length, ledger: snapshot.ledger.length, audit: snapshot.audit.length, portalContacts: snapshot.portalContacts.length, writeOffAllocations: snapshot.writeOffAllocations.length, users: snapshot.users.length },
     customers: snapshot.customers,
     ledger: snapshot.ledger,
     audit: snapshot.audit,

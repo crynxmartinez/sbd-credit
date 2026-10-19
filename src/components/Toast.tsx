@@ -89,7 +89,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={value}>
       {children}
       {/* Always mounted so screen readers announce new toasts as they arrive. Errors are announced assertively. */}
-      <div className="toast-stack">
+      <div className="toast-stack" data-dialog-companion>
       <div className="toast-wrap" role="status" aria-live="polite">
         {toasts
           .filter((toast) => toast.kind === "ok")

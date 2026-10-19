@@ -106,7 +106,8 @@ export async function inviteContact(
 
   try {
     return await transaction(async (tx) => {
-      // FOR SHARE: a status change waits for this short transaction, without blocking ledger writes the way an update lock would.
+      // FOR SHARE: a status change waits for this short transaction. (It also conflicts with the row lock a ledger write takes, so
+      // a ledger write waits for this short transaction too, up to the lock timeout.)
       const [customer] = await tx.$queryRaw<{ status: string }[]>`SELECT "status" FROM "Customer" WHERE "id" = ${customerId} FOR SHARE`;
       if (!customer) throw new ApiError(404, "not_found", "That customer no longer exists.");
       if (!canInviteTo(customer.status as CustomerStatus)) {

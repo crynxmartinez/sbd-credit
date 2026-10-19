@@ -4,7 +4,8 @@
  * page cannot be used to bounce a person to another site.
  */
 export function safeNextPath(value: string | null | undefined, fallback = "/"): string {
-  if (!value) return fallback;
+  // Next hands a repeated query key (?next=/a&next=/b) over as an array: not a destination, and not a reason to crash.
+  if (typeof value !== "string" || !value) return fallback;
   if (!value.startsWith("/") || value.startsWith("//") || value.includes("\\")) return fallback;
   // No control characters: they can hide a different destination from the check above.
   if (/[\u0000-\u001f\u007f]/.test(value)) return fallback;

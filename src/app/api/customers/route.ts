@@ -6,13 +6,13 @@ import { createCustomer, listSummaries } from "@/lib/server/services/customers";
 import type { CustomerListDto } from "@/lib/types";
 import { customerCreateSchema } from "@/lib/validation";
 
-export function GET() {
+export function GET(request: NextRequest) {
   return route(async () => {
     await requireUser();
     const asOf = businessToday();
     const body: CustomerListDto = { asOf, timeZone: BUSINESS_TIME_ZONE, customers: await listSummaries(asOf) };
     return ok(body);
-  });
+  }, { request });
 }
 
 export function POST(request: NextRequest) {
@@ -21,5 +21,5 @@ export function POST(request: NextRequest) {
     const user = await requireUser("customer.create");
     const input = await readJson(request, customerCreateSchema);
     return ok({ id: await createCustomer(input, user) }, 201);
-  });
+  }, { request });
 }

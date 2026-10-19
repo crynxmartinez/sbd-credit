@@ -9,5 +9,5 @@ export function POST(request: NextRequest) {
     // answers 503 and leaves the cookie in place, and the screen tells the person to try again.
     await endAllSessions();
     return ok({ signedOut: true });
-  });
+  }, { request });
 }

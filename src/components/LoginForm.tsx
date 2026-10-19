@@ -33,7 +33,7 @@ export function LoginForm({ next, unavailable = false }: { next?: string; unavai
 
   return (
     <main className="login-wrap">
-      <form className="login-card" onSubmit={submit} noValidate aria-labelledby="login-title">
+      <form className="login-card" onSubmit={submit} noValidate aria-label="Sign in">
         <div className="login-brand">
           <h1 className="brand-name" id="login-title" style={{ margin: 0 }}>
             STEEL BUILDING
@@ -49,15 +49,15 @@ export function LoginForm({ next, unavailable = false }: { next?: string; unavai
             </div>
           ) : null}
           {error ? (
-            <div className="form-error" role="alert">
+            <div className="form-error" role="alert" id="login-error">
               {error}
             </div>
           ) : null}
           <Field id="login_username" label="Username or email">
-            <input id="login_username" type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} value={username} onChange={(e) => setUsername(e.target.value)} autoFocus required />
+            <input id="login_username" aria-invalid={error ? true : undefined} aria-describedby={error ? "login-error" : undefined} type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} value={username} onChange={(e) => setUsername(e.target.value)} autoFocus required />
           </Field>
           <Field id="login_password" label="Password">
-            <input id="login_password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            <input id="login_password" aria-invalid={error ? true : undefined} aria-describedby={error ? "login-error" : undefined} type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </Field>
           <button type="submit" className="btn btn-primary" disabled={pending}>
             {pending ? "Signing in…" : "Sign in"}

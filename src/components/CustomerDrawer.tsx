@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { useBackGuard } from "@/lib/client/back-guard";
 import { safeHref } from "@/lib/client/links";
 import { ApiClientError } from "@/lib/client/api";
@@ -54,6 +54,7 @@ export function CustomerDrawer({ id, onClose }: { id: string; onClose: () => voi
   const { data, isLoading, isError, error, refetch, dataUpdatedAt } = useCustomerDetail(id);
   const gone = error instanceof ApiClientError && error.status === 404;
   const [tab, setTab] = useState<Tab>("ledger");
+  const pressedBackdrop = useRef(false);
 
   function onTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const index = TABS.indexOf(tab);
@@ -74,13 +75,26 @@ export function CustomerDrawer({ id, onClose }: { id: string; onClose: () => voi
   const link = safeHref(customer?.accountingProjectUrl);
 
   return (
-    <div className="drawer-overlay" onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
-      <div ref={dialogRef} className="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" tabIndex={-1}>
+    <div
+      className="drawer-overlay"
+      // Closes on the click, not the press, and only if the press began on the backdrop too: a press that starts inside the drawer
+      // and is dragged out (selecting text) must not close it, and a mis-press can be cancelled by moving away.
+      onMouseDown={(event) => {
+        pressedBackdrop.current = event.target === event.currentTarget;
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget && pressedBackdrop.current) requestClose();
+      }}
+    >
+      <div ref={dialogRef} className="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" aria-busy={isLoading || undefined} tabIndex={-1}>
+        <div className="sr-only" role="status">
+          {customer ? `${customer.businessName} loaded.` : ""}
+        </div>
         <div className="drawer-header">
           <div className="drawer-header-top">
             <div>
               {customer ? <StatusBadge status={customer.status} /> : null}
-              <h2 className="drawer-title" id="drawer-title">
+              <h2 className="drawer-title" id="drawer-title" tabIndex={-1}>
                 {customer?.businessName ?? (gone ? "Customer not found" : error ? "Couldn't load this customer" : "Loading…")}
               </h2>
             </div>

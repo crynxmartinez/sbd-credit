@@ -205,3 +205,36 @@ describe("sessionVersionAfterRestore", () => {
     expect(SECONDS).toBeLessThan(2 ** 31 - 1);
   });
 });
+
+describe("sign-in accounts are counted like every other section", () => {
+  const user = { id: "u1", username: "dana", name: "Dana", role: "ADMIN", active: true };
+  const withCount = (users: unknown, usersCount: number | undefined) =>
+    file({ users, counts: { customers: 1, ledger: 1, audit: 1, ...(usersCount === undefined ? {} : { users: usersCount }) } });
+
+  test("a file that says how many accounts it has is held to it: a truncated or missing section is refused", () => {
+    expect(() => reviveBackup(withCount([user], 2))).toThrow(/incomplete.*users/);
+    expect(() => reviveBackup(withCount(undefined, 1))).toThrow(/incomplete.*users/);
+    expect(reviveBackup(withCount([user], 1)).users).toHaveLength(1);
+  });
+
+  test("an older file with no count for accounts still restores", () => {
+    expect(reviveBackup(withCount([user], undefined)).users).toHaveLength(1);
+  });
+});
+
+describe("customer values that only a damaged file could hold", () => {
+  const withTerms = (paymentTerms: unknown) => {
+    const base = file();
+    return file({ customers: [{ ...base.customers[0], paymentTerms }] });
+  };
+
+  test("unknown payment terms are refused, because the due dates would silently become Net 30", () => {
+    expect(() => reviveBackup(withTerms("Net 365"))).toThrow(/paymentTerms/);
+    expect(() => reviveBackup(withTerms(30))).toThrow(/paymentTerms/);
+  });
+
+  test("known terms, and a customer with none recorded, are fine", () => {
+    for (const terms of ["Net 15", "Net 30", "Net 45", "Net 60", "Net 90", "Due on receipt", "COD"]) expect(() => reviveBackup(withTerms(terms))).not.toThrow();
+    expect(() => reviveBackup(withTerms(undefined))).not.toThrow();
+  });
+});

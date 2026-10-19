@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { addressBucket, clientAddress, trustedHopsFromEnv } from "./client-address";
+import { addressBucket, clientAddress, forwardedAddressMissing, trustedHopsFromEnv } from "./client-address";
 
 const headers = (forwarded?: string) => ({ get: (name: string) => (name === "x-forwarded-for" && forwarded ? forwarded : null) });
 
@@ -83,5 +83,18 @@ describe("addressBucket", () => {
     expect(addressBucket("::ffff:203.0.113.9")).toBe("203.0.113.9");
     expect(addressBucket("local")).toBe("local");
     expect(addressBucket("not an address")).toBe("not an address");
+  });
+});
+
+describe("forwardedAddressMissing", () => {
+  const headers = (value: string | null) => ({ get: () => value });
+  test("is true when we expect a proxy but the header carries no address: every visitor would then share one rate-limit bucket", () => {
+    expect(forwardedAddressMissing(headers(null), 1)).toBe(true);
+    expect(forwardedAddressMissing(headers(""), 1)).toBe(true);
+    expect(forwardedAddressMissing(headers(" , "), 1)).toBe(true);
+  });
+  test("is false when an address arrived, or when no proxy is expected at all", () => {
+    expect(forwardedAddressMissing(headers("203.0.113.9"), 1)).toBe(false);
+    expect(forwardedAddressMissing(headers(null), 0)).toBe(false);
   });
 });

@@ -28,5 +28,5 @@ export function POST(request: NextRequest) {
     const { token, password } = await readJson(request, acceptSchema);
     await acceptInvite(token, password);
     return ok({ accepted: true });
-  });
+  }, { request });
 }

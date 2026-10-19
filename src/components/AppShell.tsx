@@ -22,6 +22,10 @@ export function AppShell({ user, children }: { user: SessionUser; children: Reac
   const [modal, setModal] = useState<ModalState>(null);
   const openCustomerId = searchParams.get(DRAWER_PARAM);
 
+  // The edit form belongs to the customer drawer. When the drawer goes away (the Back button, a link) the form must too, or it
+  // stays open over a page it no longer belongs to. (Adjusting state while rendering, as React documents, rather than in an effect.)
+  if (modal?.mode === "edit" && modal.customer.id !== openCustomerId) setModal(null);
+
   // Nothing here depends on the URL, so this object is created once. If it changed on every filter keystroke, every
   // row in the table (each reads it) would re-render each time.
   const actions = useMemo<UiActions>(

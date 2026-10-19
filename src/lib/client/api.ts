@@ -31,7 +31,10 @@ export class ApiClientError extends Error {
   }
 }
 
-const UNCERTAIN_NOTE = " It may or may not have been saved. Trying again is safe: nothing will be recorded twice.";
+// Honest about both halves: pressing the SAME button again is safe where the server recognises a repeat (new customer, payment,
+// charge, reversal), but entering it again from scratch is not. For everything else a repeat of a change that did go through shows up
+// as "someone else changed this", which means it already took effect.
+const UNCERTAIN_NOTE = " It may or may not have been saved. Check the customer's history before entering it again; pressing the same button again is safe.";
 
 export async function apiFetch<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   const method = init.method ?? "GET";

@@ -180,7 +180,14 @@ export async function updateCustomer(id: string, input: CustomerUpdateInput, act
   await transaction(async (tx) => {
     const result = await tx.customer.updateMany({
       where: { id, version: expectedVersion },
-      data: { ...next, dateApplied: isoToDbDate(profile.dateApplied), version: { increment: 1 } },
+      data: {
+        ...next,
+        dateApplied: isoToDbDate(profile.dateApplied),
+        // An application still waiting has been waiting since it was SUBMITTED: correcting that date moves the clock the "awaiting
+        // review for N days" alert counts from, or the two dates would silently disagree.
+        ...(current.status === "submitted" ? { statusChangedOn: isoToDbDate(profile.dateApplied) } : {}),
+        version: { increment: 1 },
+      },
     });
     if (result.count === 0) throw stale();
     await writeAudit(tx, {

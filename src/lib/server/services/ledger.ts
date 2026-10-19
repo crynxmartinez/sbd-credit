@@ -228,7 +228,7 @@ export async function recordEntry(customerId: string, input: LedgerEntryInput, a
       const earlier = await tx.ledgerEntry.findUnique({
         where: { customerId_requestKey: { customerId, requestKey: input.requestKey } },
         select: {
-          id: true, type: true, amountCents: true, entryDate: true, dueDate: true, reference: true, note: true,
+          id: true, type: true, amountCents: true, entryDate: true, dueDate: true, reference: true, note: true, voidedAt: true,
           writeOffAllocations: { select: { chargeEntryId: true, amountCents: true } },
         },
       });
@@ -238,7 +238,11 @@ export async function recordEntry(customerId: string, input: LedgerEntryInput, a
         // A write-off sent again with a DIFFERENT choice of charges is an edited form, not a retry.
         const storedSplit = earlier.writeOffAllocations.map((allocation) => ({ chargeId: allocation.chargeEntryId, amountCents: allocation.amountCents }));
         if (input.allocations && !sameAllocations(storedSplit, input.allocations)) throw keyReuse();
-        return { id: earlier.id, warning: null, duplicate: true, postDated: false };
+        // Recorded, and then taken out of the books: "already recorded" would be a lie, because nothing counts. Say what happened.
+        if (earlier.voidedAt) {
+          throw new ApiError(409, "entry_voided", "That entry was recorded and then voided, so it does not count. Reload the customer and enter it again as a new entry if it should.");
+        }
+        return { id: earlier.id, warning: null, duplicate: true, postDated: stored.entryDate > today };
       }
     }
 

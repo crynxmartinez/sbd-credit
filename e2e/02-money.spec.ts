@@ -72,7 +72,7 @@ test("a payment whose reply was lost can be retried safely: it is recorded once"
 
   // The person is told it may have gone through, and that trying again is safe.
   await expect(alertWith(form("Record payment"), "may or may not have been saved")).toBeVisible();
-  await expect(alertWith(form("Record payment"), "nothing will be recorded twice")).toBeVisible();
+  await expect(alertWith(form("Record payment"), "pressing the same button again is safe")).toBeVisible();
 
   await form("Record payment").getByRole("button", { name: "Record payment" }).click();
   await expect(statusWith(page, "already recorded")).toBeVisible();

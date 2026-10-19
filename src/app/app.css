@@ -198,10 +198,8 @@ a.btn { text-decoration: none; }
 .alerts-list { min-height: 56px; }
 
 /* ---------- Phones: the customer list becomes cards ---------- */
-.cards-only { display: none; }
 @media (max-width: 640px) {
-  .cards-only { display: block; }
-  .table-only { display: none; }
+  .cust-empty { color: var(--text-faint); text-align: center; padding: 26px 0; }
   .cust-card { width: 100%; text-align: left; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 10px; display: flex; flex-direction: column; gap: 10px; font: inherit; cursor: pointer; }
   .cust-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .cust-card-top b { min-width: 0; overflow-wrap: anywhere; text-align: left; }
@@ -225,3 +223,54 @@ a.btn { text-decoration: none; }
 }
 
 .portal-title-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+/* ---------- Audit fixes: current page, focus, targets, print, forced colours ---------- */
+/* The current page in the sidebar was a faint fill (about 1.5:1). A bar says "you are here" without relying on colour alone. */
+.nav-btn.active { box-shadow: inset 3px 0 0 #fff; font-weight: 700; }
+
+/* A toast is dark (or red) in both themes: the page's navy focus ring vanishes on it. */
+.toast :focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.toast.err :focus-visible { outline-color: #fff; }
+:root[data-theme="dark"] .toast.err :focus-visible { outline-color: var(--red); }
+
+/* The mobile nav strip scrolls sideways, which clips a focus ring at its top, bottom and left: give the rings room. */
+.mobile-topnav { padding: 6px 6px 6px 6px; margin-left: -6px; margin-right: -6px; }
+
+/* Rows of two fields wrap and shrink instead of pushing a narrow drawer sideways (reflow at 320px). */
+.inline-form .row { flex-wrap: wrap; }
+.inline-form .col { min-width: 0; }
+.inline-form .col input, .inline-form .col select { min-width: 0; width: 100%; }
+/* Radios and checkboxes are not text fields: the rule for fields above must not stretch them. */
+.inline-form input[type="radio"], .inline-form input[type="checkbox"] { flex: none; width: auto; padding: 0; border: none; accent-color: var(--navy-light); }
+
+/* Touch: 44px targets on a phone (the 24px minimum is already met everywhere). */
+@media (max-width: 640px) {
+  .icon-btn { min-width: 44px; min-height: 44px; justify-content: center; align-items: center; }
+  .pill { min-height: 44px; }
+  .tab { min-height: 44px; }
+  .toast-close { min-width: 44px; min-height: 44px; }
+}
+
+/* The oldest-but-one aging colour was about 2.25:1 on a white panel. An outline gives each segment a visible edge of its own. */
+.aging-seg { box-shadow: inset 0 0 0 1px rgba(0,0,0,0.35); }
+
+/* Printing a customer's statement: whatever the screen theme, paper is white and every figure is dark. */
+@media print {
+  :root, :root[data-theme="dark"], :root[data-theme="light"] {
+    --bg: #fff; --surface: #fff; --surface-2: #fff; --text: #000; --text-dim: #222; --text-faint: #333; --border: #999;
+  }
+  .portal-card, .panel, .balance-box { background: #fff !important; color: #000; }
+  .util-bar, .aging-seg { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+}
+
+/* Windows high-contrast and other forced-colour modes drop author colours: states that were only a colour need a border or weight. */
+@media (forced-colors: active) {
+  .tab { border-bottom: 3px solid transparent; }
+  .tab[aria-selected="true"] { border-bottom-color: Highlight; font-weight: 700; }
+  .pill[aria-pressed="true"], .pill.active { outline: 2px solid Highlight; outline-offset: -2px; font-weight: 700; }
+  .nav-btn.active { outline: 2px solid Highlight; outline-offset: -2px; }
+  .util-bar, .aging-bar, .aging-seg, .aging-swatch { forced-color-adjust: none; border: 1px solid CanvasText; }
+  .util-fill { forced-color-adjust: none; background: Highlight; }
+  .alert-dot { forced-color-adjust: none; border: 2px solid CanvasText; }
+  .badge { border: 1px solid CanvasText; }
+}

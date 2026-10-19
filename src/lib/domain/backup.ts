@@ -5,6 +5,8 @@
  * Doing that by named column (not "anything that looks like a date") means free text such as a note or a business
  * name can never be mistaken for one.
  */
+import { PAYMENT_TERMS } from "./constants";
+
 export const BACKUP_FORMAT = 1;
 
 const DATE_FIELDS = {
@@ -27,7 +29,7 @@ export interface BackupFile {
   format: number;
   schema: string;
   takenAt: string;
-  counts: { customers: number; ledger: number; audit: number; portalContacts: number; writeOffAllocations?: number };
+  counts: { customers: number; ledger: number; audit: number; portalContacts: number; writeOffAllocations?: number; users?: number };
   customers: Row[];
   ledger: Row[];
   audit: Row[];
@@ -140,8 +142,23 @@ export function reviveBackup(raw: unknown, nowMs: number = Date.now()): BackupFi
     throw new Error(`The backup is incomplete: it says ${String(counts?.portalContacts)} portalContacts rows but contains ${actual.portalContacts}.`);
   }
 
+  // Accounts are counted too, by files written since that was added: a missing or cut-short section is then caught, instead of
+  // restoring fewer sign-ins and still exiting cleanly. (An older file has no such count and is not held to one.)
+  if (counts?.users !== undefined) {
+    const present = Array.isArray(file.users) ? file.users.length : 0;
+    if (counts.users !== present) throw new Error(`The backup is incomplete: it says ${String(counts.users)} users but contains ${present}.`);
+  }
+
   if (file.writeOffAllocations !== undefined && counts?.writeOffAllocations !== rawAllocations.length) {
     throw new Error(`The backup is incomplete: it says ${String(counts?.writeOffAllocations)} writeOffAllocations rows but contains ${rawAllocations.length}.`);
+  }
+
+  for (const [index, row] of file.customers.entries()) {
+    // Not reachable through the app (the form offers a fixed list), so only a damaged or hand-edited file gets here: refuse it, rather
+    // than let an unknown value quietly turn every due date into Net 30.
+    if (row.paymentTerms !== undefined && !(PAYMENT_TERMS as readonly unknown[]).includes(row.paymentTerms)) {
+      throw new Error(`customers[${index}].paymentTerms is not a known payment term: ${String(row.paymentTerms)}`);
+    }
   }
 
   const customerIds = new Set(file.customers.map((row) => row.id));
@@ -169,7 +186,10 @@ export function reviveBackup(raw: unknown, nowMs: number = Date.now()): BackupFi
     format: BACKUP_FORMAT,
     schema: String(file.schema ?? ""),
     takenAt: String(file.takenAt ?? ""),
-    counts: file.writeOffAllocations === undefined ? actual : { ...actual, writeOffAllocations: rawAllocations.length },
+    counts: {
+      ...(file.writeOffAllocations === undefined ? actual : { ...actual, writeOffAllocations: rawAllocations.length }),
+      ...(counts?.users === undefined ? {} : { users: counts.users as number }),
+    },
     customers: reviveDates(file.customers, DATE_FIELDS.customers, "customers"),
     ledger: reviveDates(file.ledger, DATE_FIELDS.ledger, "ledger"),
     audit: reviveDates(file.audit, DATE_FIELDS.audit, "audit"),

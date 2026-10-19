@@ -139,7 +139,11 @@ export function usePortalContacts(customerId: string) {
 
 function useRefreshContacts(customerId: string) {
   const client = useQueryClient();
-  return () => Promise.all([client.invalidateQueries({ queryKey: ["portal-contacts", customerId] }), client.invalidateQueries({ queryKey: ["customer", customerId] })]);
+  // In the background, like useRefreshAll: returning the promise kept "Creating…" on screen for the refetch after the link already
+  // existed, and a person who closed the drawer in that moment lost a link that is shown only once.
+  return () => {
+    void Promise.all([client.invalidateQueries({ queryKey: ["portal-contacts", customerId] }), client.invalidateQueries({ queryKey: ["customer", customerId] })]);
+  };
 }
 
 export function useInviteContact(customerId: string) {

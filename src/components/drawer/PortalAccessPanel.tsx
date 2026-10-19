@@ -1,5 +1,6 @@
 "use client";
 
+import { focusById } from "../focus";
 import { useState, type FormEvent } from "react";
 import { ApiClientError } from "@/lib/client/api";
 import { useInviteContact, usePortalContacts, useReinviteContact, useSetContactActive } from "@/lib/client/queries";
@@ -176,9 +177,9 @@ export function PortalAccessPanel({ customerId, issued, onIssuedChange }: { cust
 
   return (
     <div>
-      <div className="kv-label" style={{ marginBottom: 8 }}>
+      <h3 className="kv-label" style={{ marginBottom: 8 }}>
         Customer portal
-      </div>
+      </h3>
       <p className="ledger-sub" style={{ marginTop: 0 }}>
         People who can sign in to see this customer&apos;s credit, balance and history.
       </p>
@@ -186,6 +187,14 @@ export function PortalAccessPanel({ customerId, issued, onIssuedChange }: { cust
       {issued ? <LinkBox issued={issued} onDismiss={() => onIssuedChange(null)} /> : null}
 
       {isLoading ? <div className="skeleton" style={{ height: 40 }} /> : null}
+      {error && data ? (
+        <div className="form-error" role="alert">
+          The list below may be out of date: it could not be refreshed. {error.message}{" "}
+          <button type="button" className="btn btn-sm" onClick={() => refetch()}>
+            Retry
+          </button>
+        </div>
+      ) : null}
       {error && !data ? (
         <div className="form-error" role="alert">
           {error.message}{" "}
@@ -204,10 +213,17 @@ export function PortalAccessPanel({ customerId, issued, onIssuedChange }: { cust
       ) : null}
 
       {adding ? (
-        <AddContact customerId={customerId} onIssued={showLink} onCancel={() => setAdding(false)} />
+        <AddContact
+          customerId={customerId}
+          onIssued={showLink}
+          onCancel={() => {
+            setAdding(false);
+            focusById("portal-add-person"); // the form replaced this button: go back to it
+          }}
+        />
       ) : (
         <div className="action-row" style={{ marginTop: 10 }}>
-          <button type="button" className="btn btn-sm" onClick={() => setAdding(true)}>
+          <button type="button" id="portal-add-person" className="btn btn-sm" onClick={() => setAdding(true)}>
             Add a person
           </button>
         </div>

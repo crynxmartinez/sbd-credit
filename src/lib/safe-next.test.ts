@@ -51,3 +51,13 @@ describe("safeNextFor", () => {
     expect(safeNextFor("staff", undefined)).toBe("/");
   });
 });
+
+describe("a query value that is not one string (?next=/a&next=/b, or none)", () => {
+  test("is treated as no destination instead of crashing the sign-in page", () => {
+    expect(safeNextPath(["/a", "/b"] as unknown as string)).toBe("/");
+    expect(safeNextPath(42 as unknown as string)).toBe("/");
+    expect(safeNextPath({} as unknown as string, "/home")).toBe("/home");
+    expect(safeNextFor("staff", ["/a", "/b"] as unknown as string)).toBe("/");
+    expect(safeNextFor("customer", ["/portal", "/x"] as unknown as string)).toBe("/portal");
+  });
+});

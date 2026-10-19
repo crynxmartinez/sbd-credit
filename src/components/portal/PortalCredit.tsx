@@ -65,9 +65,9 @@ export function PortalCredit({ view }: { view: PortalView }) {
       <StandingNotice standing={view.standing} />
 
       <section className="portal-card portal-hero" aria-labelledby="available-label">
-        <div className="kv-label" id="available-label">
+        <h2 className="kv-label" id="available-label" style={{ margin: 0 }}>
           Available to purchase on credit
-        </div>
+        </h2>
         <div className="portal-available">{formatCents(view.availableCents, { fixed: true })}</div>
         {active ? <UtilBar pct={view.utilizationPct} level={level} wide /> : null}
         <dl className="portal-facts">

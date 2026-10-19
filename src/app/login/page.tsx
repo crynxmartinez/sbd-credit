@@ -6,9 +6,12 @@ import { getCurrentUser } from "@/lib/server/auth/current-user";
 import { log } from "@/lib/server/log";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Sign in — Steel Building Depot", robots: { index: false, follow: false } };
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string }> }) {
-  const { next } = await searchParams;
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ next?: string | string[] }> }) {
+  const { next: rawNext } = await searchParams;
+  // A repeated ?next= arrives as an array: take the first, which safeNextFor then checks like any other.
+  const next = Array.isArray(rawNext) ? rawNext[0] : rawNext;
 
   let signedIn: "staff" | "customer" | null = null;
   let unavailable = false;

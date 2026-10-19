@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { ApiClientError } from "@/lib/client/api";
 import { useBusinessToday, useDecision } from "@/lib/client/queries";
+import { focusDrawerTitle } from "../focus";
 import { PAYMENT_TERMS } from "@/lib/domain/constants";
 import { centsToDecimal } from "@/lib/domain/csv";
 import { parseMoneyToCents } from "@/lib/domain/money";
@@ -24,16 +25,22 @@ function useDecide(customer: CustomerSummary, done: () => void) {
   const decision = useDecision(customer.id);
   const [error, setError] = useState<string | null>(null);
 
-  async function run(input: unknown, success: string) {
+  /** Returns whether the decision was recorded. */
+  async function run(input: unknown, success: string): Promise<boolean> {
     setError(null);
     const parsed = decisionSchema.safeParse(input);
-    if (!parsed.success) return setError(parsed.error.issues[0]?.message ?? "Check the details and try again.");
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Check the details and try again.");
+      return false;
+    }
     try {
       await decision.mutateAsync(parsed.data);
       notify(success);
       done();
+      return true;
     } catch (caught) {
       setError(caught instanceof ApiClientError ? caught.message : "Could not save. Please try again.");
+      return false;
     }
   }
   return { run, fail: setError, error, pending: decision.isPending };
@@ -41,6 +48,9 @@ function useDecide(customer: CustomerSummary, done: () => void) {
 
 function ApproveForm({ customer, done }: { customer: CustomerSummary; done: () => void }) {
   const { run, fail, error, pending } = useDecide(customer, done);
+  // The version this form was opened at. The drawer refreshes every 30 seconds; sending the NEWEST version would silently pass the
+  // "someone else changed this" check for a change made while the form was open.
+  const [openedVersion] = useState(customer.version);
   const [limit, setLimit] = useState(customer.requestedLimitCents ? centsToDecimal(customer.requestedLimitCents) : "");
   const [terms, setTerms] = useState(customer.paymentTerms);
   const today = useBusinessToday();
@@ -52,7 +62,7 @@ function ApproveForm({ customer, done }: { customer: CustomerSummary; done: () =
     const cents = parseMoneyToCents(limit);
     if (cents === null || cents <= 0) return fail("Enter a credit limit greater than 0, like 25000.");
     void run(
-      { action: "approve", version: customer.version, creditLimitCents: cents, paymentTerms: terms, creditStartDate: start },
+      { action: "approve", version: openedVersion, creditLimitCents: cents, paymentTerms: terms, creditStartDate: start },
       "Application approved.",
     );
   }
@@ -88,13 +98,14 @@ function ReasonForm({ customer, action, label, success, done }: {
   customer: CustomerSummary; action: "deny" | "suspend"; label: string; success: string; done: () => void;
 }) {
   const { run, error, pending } = useDecide(customer, done);
+  const [openedVersion] = useState(customer.version); // see ApproveForm
   const [reason, setReason] = useState("");
   const id = `reason-${action}`;
   const formRef = useAutoFocus<HTMLFormElement>();
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    void run({ action, version: customer.version, reason }, success);
+    void run({ action, version: openedVersion, reason }, success);
   }
 
   return (
@@ -118,7 +129,13 @@ function InstantAction({ customer, action, label, success, primary }: {
   const { run, error, pending } = useDecide(customer, () => undefined);
   return (
     <>
-      <button type="button" className={`btn btn-sm${primary ? " btn-primary" : ""}`} disabled={pending} onClick={() => void run({ action, version: customer.version }, success)}>
+      <button
+        type="button"
+        className={`btn btn-sm${primary ? " btn-primary" : ""}`}
+        disabled={pending}
+        // The button goes away once the status changes: move focus to the customer's name instead of dropping it on the page.
+        onClick={() => void run({ action, version: customer.version }, success).then((recorded) => recorded && focusDrawerTitle())}
+      >
         {label}
       </button>
       {error ? <span className="field-error" role="alert">{error}</span> : null}
@@ -165,9 +182,10 @@ export function DecisionPanel({ customer, active, setActive }: Props) {
         </div>
       ) : null}
 
-      {active === "approve" ? <ApproveForm customer={customer} done={close} /> : null}
-      {active === "deny" ? <ReasonForm customer={customer} action="deny" label="Confirm denial" success="Application denied." done={close} /> : null}
-      {active === "suspend" ? <ReasonForm customer={customer} action="suspend" label="Suspend credit" success="Credit suspended." done={close} /> : null}
+      {/* A form is shown only while its decision is still one the workflow would accept: if a colleague changed the status, it goes. */}
+      {active === "approve" && decisions.includes("approve") ? <ApproveForm customer={customer} done={close} /> : null}
+      {active === "deny" && decisions.includes("deny") ? <ReasonForm customer={customer} action="deny" label="Confirm denial" success="Application denied." done={close} /> : null}
+      {active === "suspend" && decisions.includes("suspend") ? <ReasonForm customer={customer} action="suspend" label="Suspend credit" success="Credit suspended." done={close} /> : null}
     </div>
   );
 }

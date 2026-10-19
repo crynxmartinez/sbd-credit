@@ -87,3 +87,21 @@ describe("createLoginThrottle", () => {
     expect(throttle.size()).toBe(0);
   });
 });
+
+describe("forgive: a failure that was not the person's doing", () => {
+  test("takes one failure back, so a database hiccup or a busy server does not build up a wait", () => {
+    const throttle = createLoginThrottle({ now: () => 1_000_000 });
+    for (let i = 0; i < FREE_FAILURES + 1; i += 1) throttle.fail("a|dana");
+    expect(throttle.check("a|dana").allowed).toBe(false);
+    throttle.forgive("a|dana");
+    expect(throttle.check("a|dana").allowed).toBe(true); // back within the free count
+    for (let i = 0; i < 10; i += 1) throttle.forgive("a|dana");
+    expect(throttle.size()).toBe(0); // forgiving more than was counted just forgets the key
+  });
+
+  test("forgiving an unknown key does nothing", () => {
+    const throttle = createLoginThrottle({ now: () => 1 });
+    throttle.forgive("never-seen");
+    expect(throttle.size()).toBe(0);
+  });
+});

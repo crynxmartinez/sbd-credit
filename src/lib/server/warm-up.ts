@@ -14,6 +14,6 @@ import { log } from "./log";
 export async function warmUp(): Promise<void> {
   await Promise.allSettled([
     prisma.$queryRaw`SELECT 1`.catch((error: unknown) => log("warn", "startup.database_not_ready", { error })),
-    prepareLoginTiming(),
+    prepareLoginTiming().catch((error: unknown) => log("error", "startup.login_timing_not_ready", { error })),
   ]);
 }

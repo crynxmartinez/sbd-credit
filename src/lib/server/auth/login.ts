@@ -24,7 +24,11 @@ export async function prepareLoginTiming(): Promise<void> {
 
 /** A real hash to compare against when there is nobody to check, so a miss takes as long as a wrong password. */
 function missingUserHash(): Promise<string> {
-  dummyHash ??= bcrypt.hash("no-such-user-placeholder", BCRYPT_COST);
+  dummyHash ??= bcrypt.hash("no-such-user-placeholder", BCRYPT_COST).catch((error: unknown) => {
+    // A failed hash must not be remembered: every sign-in for an unknown name would fail until the next restart.
+    dummyHash = undefined;
+    throw error;
+  });
   return dummyHash;
 }
 

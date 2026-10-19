@@ -30,5 +30,5 @@ export function GET(_request: NextRequest, { params }: Context) {
     // Who downloaded customer data, and when: the file holds every customer's details.
     log("info", "export.downloaded", { kind, userId: user.id });
     return csvResponse(`${kind}.csv`, body);
-  });
+  }, { request: _request });
 }

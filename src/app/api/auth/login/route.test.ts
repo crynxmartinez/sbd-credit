@@ -153,3 +153,14 @@ describe("what sign-in records", () => {
     expect(authenticateAny).not.toHaveBeenCalled();
   });
 });
+
+describe("a failure that is not a wrong password", () => {
+  test("is not counted against the person: a database error does not build up a wait", async () => {
+    authenticateAny.mockImplementation(async () => {
+      throw new Error("database is down");
+    });
+    for (let i = 0; i < 6; i += 1) expect((await attempt(POST, "dana7@example.com", "203.0.113.35")).status).toBe(500);
+    authenticateAny.mockResolvedValueOnce({ kind: "staff", user: { id: "s7", name: "Dana" } });
+    expect((await attempt(POST, "dana7@example.com", "203.0.113.35")).status).toBe(200); // never made to wait
+  });
+});

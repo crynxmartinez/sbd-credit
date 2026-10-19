@@ -14,5 +14,5 @@ export function POST(request: NextRequest, { params }: Context) {
     const { id, contactId } = await params;
     const issued = await reissueInvite(id, contactId, user);
     return ok({ contact: issued.contact, link: inviteLink(issued.token), expiresAt: issued.expiresAt });
-  });
+  }, { request });
 }

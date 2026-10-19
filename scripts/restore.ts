@@ -53,7 +53,17 @@ async function main(): Promise<void> {
       // Which charges each write-off covers. A backup from before allocations existed has no section: allocate its write-offs the
       // way the application would have (oldest-due charges first). One that has the section is put back exactly as it was.
       for (const batch of inBatches(backup.writeOffAllocations, BATCH_SIZE)) await tx.writeOffAllocation.createMany({ data: batch as never });
-      if (!backup.allocationsIncluded) await tx.$queryRaw`SELECT credit_backfill_write_off_allocations()`;
+      if (!backup.allocationsIncluded) {
+        const [done] = await tx.$queryRaw<{ allocated: number }[]>`SELECT credit_backfill_write_off_allocations() AS allocated`;
+        // Anything it could not allocate stays an ordinary credit: balances are right, but say so, so it is not a surprise later.
+        const [left] = await tx.$queryRaw<{ unallocated: number }[]>`
+          SELECT count(*)::int AS unallocated FROM "LedgerEntry" w
+          WHERE w."type" = 'WRITE_OFF' AND w."voidedAt" IS NULL
+            AND NOT EXISTS (SELECT 1 FROM "LedgerEntry" r WHERE r."reversesEntryId" = w."id" AND r."voidedAt" IS NULL)
+            AND NOT EXISTS (SELECT 1 FROM "WriteOffAllocation" a WHERE a."writeOffEntryId" = w."id")`;
+        console.log(`  old-format backup: ${done?.allocated ?? 0} write-off(s) allocated to charges.`);
+        if ((left?.unallocated ?? 0) > 0) console.log(`  ${left!.unallocated} write-off(s) could not be allocated and stay as ordinary credits (balances are unaffected).`);
+      }
       for (const batch of inBatches(backup.audit, BATCH_SIZE)) await tx.auditEvent.createMany({ data: batch as never });
 
       // Prove what went in matches what the file promised, still inside the transaction: a mismatch rolls it all back.
