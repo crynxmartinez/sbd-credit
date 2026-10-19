@@ -7,6 +7,9 @@ describe("assertSafeTarget", () => {
   test("allows the dev schemas outside production", () => {
     expect(() => assertSafeTarget(`${base}&schema=credit_dev`, "development")).not.toThrow();
     expect(() => assertSafeTarget(`${base}&schema=credit_test_ledger`, "test")).not.toThrow();
+    for (const lookAlike of ["credit_devious", "credit_testing_prod", "credit_dev2"]) {
+      expect(() => assertSafeTarget(`${base}&schema=${lookAlike}`, "development"), lookAlike).toThrow(/Refusing/);
+    }
   });
 
   test("refuses the live shipper tables from a developer machine", () => {

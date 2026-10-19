@@ -23,13 +23,17 @@ export default defineConfig({
         "src/lib/domain/**",
         "src/lib/safe-next.ts",
         "src/lib/validation.ts",
-        "src/lib/server/{as-of,clock,db-errors,db-url,env,http,log,public-url}.ts",
+        "src/lib/server/{as-of,clock,db-errors,db-url,env,health,http,list-cache,log,public-url,role-check,tx}.ts",
+        "src/app/api/health/route.ts",
+        "src/instrumentation.ts",
         "src/lib/server/auth/**",
         "src/app/api/auth/login/route.ts",
         "src/app/api/portal/accept/route.ts",
       ],
-      exclude: ["**/*.test.ts"],
-      thresholds: { lines: 80, functions: 80, branches: 80, statements: 80 },
+      // login.ts needs a database (the integration and browser suites cover it); clock.ts is three lines that read the clock.
+      exclude: ["**/*.test.ts", "src/lib/server/auth/login.ts", "src/lib/server/clock.ts"],
+      // The overall figure alone lets a well-tested file hide a barely-tested one: every file has to clear a floor of its own too.
+      thresholds: { lines: 80, functions: 80, branches: 80, statements: 80, perFile: true },
     },
   },
 });

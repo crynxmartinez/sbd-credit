@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { BACKUP_FORMAT, inBatches, reviveBackup, sessionVersionAfterRestore } from "./backup";
+import { BACKUP_FORMAT, SESSION_EPOCH_SECONDS, inBatches, reviveBackup, sessionVersionAfterRestore } from "./backup";
 
 function file(overrides: Record<string, unknown> = {}) {
   return {
@@ -179,7 +179,7 @@ describe("write-off allocations in a backup", () => {
 
 describe("sessionVersionAfterRestore", () => {
   const NOW = Date.UTC(2026, 9, 18, 12, 0, 0); // a real clock reading, in milliseconds
-  const SECONDS = Math.floor(NOW / 1000);
+  const SECONDS = Math.floor(NOW / 1000) - SESSION_EPOCH_SECONDS;
 
   test("is one higher than the backed-up version when that is already ahead of the clock", () => {
     expect(sessionVersionAfterRestore(SECONDS + 50, NOW)).toBe(SECONDS + 51);
@@ -201,8 +201,13 @@ describe("sessionVersionAfterRestore", () => {
     expect(reviveBackup(withContact, NOW).portalContacts[0]!.sessionVersion).toBe(SECONDS);
   });
 
-  test("fits the database column (a 32-bit integer) for decades", () => {
+  test("fits the database column (a 32-bit integer) until the 2090s: it counts seconds from 2026, not from 1970", () => {
+    expect(SESSION_EPOCH_SECONDS).toBe(Date.UTC(2026, 0, 1) / 1000);
     expect(SECONDS).toBeLessThan(2 ** 31 - 1);
+    // The latest day it still fits: 2^31 - 1 seconds after 2026-01-01 is in the year 2094.
+    expect(new Date((SESSION_EPOCH_SECONDS + 2 ** 31 - 1) * 1000).getUTCFullYear()).toBeGreaterThanOrEqual(2094);
+    // An account the old rule restored (a count near 1.79 billion) is still moved FORWARD, never back.
+    expect(sessionVersionAfterRestore(1_790_000_000, NOW)).toBe(1_790_000_001);
   });
 });
 

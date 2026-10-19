@@ -86,6 +86,8 @@ describe("production-only checks", () => {
     expect(validateEnvironment({ ...GOOD_PROD_TLS, LOGIN_ATTEMPTS_PER_ADDRESS: "10000" })).toEqual([expect.stringContaining("LOGIN_ATTEMPTS_PER_ADDRESS")]);
     expect(validateEnvironment({ ...GOOD_PROD_TLS, LOGIN_ATTEMPTS_PER_ACCOUNT: "10000" })).toEqual([expect.stringContaining("LOGIN_ATTEMPTS_PER_ACCOUNT")]);
     expect(validateEnvironment({ ...GOOD_PROD_TLS, LOGIN_FREE_FAILURES: "10000" })).toEqual([expect.stringContaining("LOGIN_FREE_FAILURES")]);
+    expect(validateEnvironment({ ...GOOD_PROD_TLS, ACCEPT_ATTEMPTS_PER_ADDRESS: "10000" })).toEqual([expect.stringContaining("ACCEPT_ATTEMPTS_PER_ADDRESS")]);
+    expect(validateEnvironment({ ...GOOD_PROD_TLS, CREDIT_DEV_AUTOLOGIN: "1" })).toEqual([expect.stringContaining("CREDIT_DEV_AUTOLOGIN")]);
     expect(validateEnvironment({ ...GOOD_DEV, LOGIN_ATTEMPTS_PER_ADDRESS: "10000" })).toEqual([]);
   });
 

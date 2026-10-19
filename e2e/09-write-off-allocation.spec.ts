@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { ADMIN, EMPLOYEE, alertWith, balanceText, drawer, newSession, openCustomer, requireCredentials, signIn, statusWith } from "./helpers";
+import { ADMIN, EMPLOYEE, businessDaysAgo, alertWith, balanceText, drawer, newSession, openCustomer, requireCredentials, signIn, statusWith } from "./helpers";
 
 /**
  * A write-off names the charges it covers. The form offers them, the review step lists them, the history says which were
@@ -124,7 +124,7 @@ test("an employee is never offered a write-off, and the server refuses one", asy
   await expect(drawer(employee).getByRole("button", { name: "Write off" })).toHaveCount(0);
   const refused = await employee.request.post(`/api/customers/${customerId}/ledger`, {
     headers: { Origin: ORIGIN },
-    data: { type: "WRITE_OFF", amountCents: 100, entryDate: new Date().toISOString().slice(0, 10), note: "Nope" },
+    data: { type: "WRITE_OFF", amountCents: 100, entryDate: businessDaysAgo(0), note: "Nope" },
   });
   expect(refused.status()).toBe(403);
   await context.close();

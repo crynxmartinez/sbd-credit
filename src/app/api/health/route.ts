@@ -1,32 +1,14 @@
-import { prisma } from "@/lib/server/db";
-import { log } from "@/lib/server/log";
-
-const DATABASE_TIMEOUT_MS = 3_000;
+import { healthAnswer } from "@/lib/server/health";
 
 /**
- * For uptime monitors and deploy checks. Public on purpose, so it says only whether the app can reach its database:
- * no versions, hostnames, counts or error text.
+ * For uptime monitors and deploy checks. Public on purpose, so it says only whether the app can use its database: no versions,
+ * hostnames, counts or error text. It is answered from a short-lived shared result (and one probe at a time), because anyone can
+ * call it, and each real check takes one of the few pooled connections that signed-in people need. (See lib/server/health.ts.)
  */
 export async function GET() {
-  let database: "ok" | "error" = "error";
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      prisma.$queryRaw`SELECT 1`,
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error("timeout")), DATABASE_TIMEOUT_MS);
-      }),
-    ]);
-    database = "ok";
-  } catch (error) {
-    log("error", "health.database_unreachable", { error });
-  } finally {
-    clearTimeout(timer);
-  }
-
-  const healthy = database === "ok";
+  const answer = await healthAnswer();
   return Response.json(
-    { status: healthy ? "ok" : "degraded", checks: { database } },
-    { status: healthy ? 200 : 503, headers: { "Cache-Control": "no-store" } },
+    { status: answer.healthy ? "ok" : "degraded", checks: { database: answer.healthy ? "ok" : "error" } },
+    { status: answer.healthy ? 200 : 503, headers: { "Cache-Control": "no-store" } },
   );
 }

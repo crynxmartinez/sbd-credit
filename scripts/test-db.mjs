@@ -9,6 +9,7 @@
  *   npm run test:db -- portal      only the files whose name contains "portal"
  */
 import { spawnSync } from "node:child_process";
+import { waitPastMidnightIfNear } from "./lib/midnight-guard.mjs";
 import { joinCommand } from "./lib/shell.mjs";
 
 const env = { ...process.env, CREDIT_DEV_SCHEMA: "credit_test" };
@@ -22,6 +23,7 @@ function step(label, command) {
   }
 }
 
+await waitPastMidnightIfNear("test-db");
 step("reset the credit_test schema", "node scripts/dev-db.mjs reset");
 step("apply migrations", "node scripts/with-dev-db.mjs prisma migrate deploy");
 const filters = process.argv.slice(2);

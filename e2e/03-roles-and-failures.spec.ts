@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { ADMIN, EMPLOYEE, alertWith, drawer, newSession, openCustomer, requireCredentials, signIn, statusWith } from "./helpers";
+import { businessDaysAgo, ADMIN, EMPLOYEE, alertWith, drawer, newSession, openCustomer, requireCredentials, signIn, statusWith } from "./helpers";
 
 const ORIGIN = process.env.E2E_ORIGIN ?? "http://127.0.0.1:3201";
 
@@ -36,9 +36,11 @@ test.describe("what an employee can and cannot do", () => {
 
     const adjustment = await page.request.post(`/api/customers/${customer.id}/ledger`, {
       headers: { Origin: ORIGIN },
-      data: { type: "ADJUSTMENT", amountCents: 100, entryDate: "2026-10-14" },
+      data: { type: "ADJUSTMENT", amountCents: 100, entryDate: businessDaysAgo(0) },
     });
+    // Refused for the right reason: the role, not (say) a date in a closed month, which also answers 403.
     expect(adjustment.status()).toBe(403);
+    expect((await adjustment.json()).error.code).toBe("forbidden");
     await context.close();
   });
 
@@ -75,13 +77,19 @@ test.describe("when things go wrong, the screen says so", () => {
     await page.goto("/customers");
     await expect(page.getByRole("button", { name: "Midwest Fabrication LLC", exact: true })).toBeVisible();
 
-    await page.route("**/api/customers", (route) => route.abort("failed"));
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    let refused = 0;
+    await page.route("**/api/customers", (route) => {
+      refused += 1;
+      return route.abort("failed");
+    });
     // Force a refetch the way a returning-to-the-tab does.
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await page.getByRole("link", { name: "Dashboard" }).first().click();
     await page.getByRole("link", { name: "Customers" }).first().click();
 
+    // The refresh really failed, the person is TOLD so (with how old what they see is), and the last good data is still there.
+    await expect.poll(() => refused).toBeGreaterThan(0);
+    await expect(alertWith(page, /Couldn.t refresh customers\. Showing what was loaded at/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Midwest Fabrication LLC", exact: true })).toBeVisible();
     await context.close();
   });

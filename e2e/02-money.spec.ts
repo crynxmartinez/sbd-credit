@@ -108,8 +108,13 @@ test("voiding needs a reason, takes the entry out of the balance, and is kept in
 test("the dashboard figures agree with the customer's own screen", async () => {
   await page.keyboard.press("Escape");
   await page.goto("/");
-  await expect(page.getByText("Total outstanding balance")).toBeVisible();
+  const card = page.locator(".stat-card").filter({ hasText: "Total outstanding balance" });
+  await expect(card).toBeVisible();
   const customers = await (await page.request.get("/api/customers")).json();
   const mine = customers.data.customers.find((c: { businessName: string }) => c.businessName === NAME);
   expect(mine.balanceCents).toBe(93_422);
+  // What the dashboard SHOWS is the sum of what customers owe (credit balances are not subtracted), formatted like every other amount.
+  const outstanding = customers.data.customers.reduce((sum: number, c: { balanceCents: number }) => sum + Math.max(0, c.balanceCents), 0);
+  const dollars = (outstanding / 100).toLocaleString("en-US", { minimumFractionDigits: outstanding % 100 === 0 ? 0 : 2, maximumFractionDigits: 2 });
+  await expect(card.locator(".stat-value")).toHaveText(`$${dollars}`);
 });

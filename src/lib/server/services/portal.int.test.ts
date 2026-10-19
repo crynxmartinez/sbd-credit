@@ -15,6 +15,7 @@ import { createCustomer, decide, getDetail } from "./customers";
 import { recordEntry, reverseEntry, voidEntry } from "./ledger";
 import { acceptInvite, inviteContact, listContacts, reissueInvite, setContactActive } from "./portal-access";
 import { getPortalView } from "./portal";
+import { DB_REFUSAL } from "./db-refusal";
 
 const ADMIN: SessionUser = { id: "u-admin", username: "admin", name: "Test Admin", role: "ADMIN" };
 const EMPLOYEE: SessionUser = { id: "u-emp", username: "emp", name: "Test Employee", role: "EMPLOYEE" };
@@ -449,9 +450,9 @@ describe("the database itself protects customer accounts", () => {
 
   test("an email must be lower-case, trimmed and contain an @", async () => {
     const id = await approvedCustomer("Raw Email Co");
-    await expect(prisma.customerUser.create({ data: baseUser(id, "Upper@Example.com") })).rejects.toThrow();
-    await expect(prisma.customerUser.create({ data: baseUser(id, " spaced@example.com") })).rejects.toThrow();
-    await expect(prisma.customerUser.create({ data: baseUser(id, "no-at-sign") })).rejects.toThrow();
+    await expect(prisma.customerUser.create({ data: baseUser(id, "Upper@Example.com") })).rejects.toThrow(DB_REFUSAL);
+    await expect(prisma.customerUser.create({ data: baseUser(id, " spaced@example.com") })).rejects.toThrow(DB_REFUSAL);
+    await expect(prisma.customerUser.create({ data: baseUser(id, "no-at-sign") })).rejects.toThrow(DB_REFUSAL);
     await expect(prisma.customerUser.create({ data: baseUser(id, "ok@example.com") })).resolves.toBeDefined();
   });
 
@@ -459,14 +460,14 @@ describe("the database itself protects customer accounts", () => {
     const id = await approvedCustomer("Raw Invite Co");
     const issued = await inviteContact(id, { name: "Dana", email: unique("rawinv") }, ADMIN);
     const base = { customerUserId: issued.contact.id, expiresAt: new Date(Date.now() + 3_600_000), createdBy: "raw" };
-    await expect(prisma.portalInvite.create({ data: { ...base, tokenHash: randomUUID() } })).rejects.toThrow();
+    await expect(prisma.portalInvite.create({ data: { ...base, tokenHash: randomUUID() } })).rejects.toThrow(DB_REFUSAL);
     // An invitation cannot be both used and replaced.
-    await expect(prisma.portalInvite.create({ data: { ...base, tokenHash: randomUUID(), usedAt: new Date(), revokedAt: new Date() } })).rejects.toThrow();
+    await expect(prisma.portalInvite.create({ data: { ...base, tokenHash: randomUUID(), usedAt: new Date(), revokedAt: new Date() } })).rejects.toThrow(DB_REFUSAL);
   });
 
   test("a customer's account cannot be deleted while it has contacts (history is kept)", async () => {
     const id = await approvedCustomer("Raw Delete Co");
     await activeContact(id);
-    await expect(prisma.customer.delete({ where: { id } })).rejects.toThrow();
+    await expect(prisma.customer.delete({ where: { id } })).rejects.toThrow(DB_REFUSAL);
   });
 });

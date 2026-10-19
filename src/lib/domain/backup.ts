@@ -69,12 +69,14 @@ function reviveDates(rows: Row[], fields: readonly string[], table: string): Row
  * The session version a restored account gets. A cookie is valid only while the account's version equals the one in it, and
  * every sign-out adds one, so "one more than the backed-up version" may be a number a cookie ALREADY carries (the backup was
  * taken at 5, someone signed out and in again at 6, and the restored account would be at 6). A version drawn from the clock
- * is higher than any the account could have reached since, so no earlier cookie can match. (Seconds since 1970 fit the
- * column until 2038.)
+ * is higher than any the account could have reached since, so no earlier cookie can match. It counts seconds from the start of
+ * 2026, not from 1970: the column is a 32-bit integer, which holds seconds-since-1970 only until January 2038 and these until 2094.
  */
+export const SESSION_EPOCH_SECONDS = 1_767_225_600; // 2026-01-01T00:00:00Z
+
 export function sessionVersionAfterRestore(previous: unknown, nowMs: number): number {
   const base = typeof previous === "number" && Number.isInteger(previous) ? previous : 1;
-  return Math.max(base + 1, Math.floor(nowMs / 1000));
+  return Math.max(base + 1, Math.floor(nowMs / 1000) - SESSION_EPOCH_SECONDS);
 }
 
 /**

@@ -88,7 +88,7 @@ try {
   const contactsB = byId(b.portalContacts ?? []);
   const contactsMatch =
     Object.keys(contactsA).length === Object.keys(contactsB).length &&
-    Object.entries(contactsA).every(([id, row]) => contactsB[id] && JSON.stringify({ ...row, sessionVersion: 0 }) === JSON.stringify({ ...contactsB[id], sessionVersion: 0 }) && contactsB[id].sessionVersion >= Math.max(row.sessionVersion + 1, Math.floor(Date.parse(a.takenAt) / 1000)));
+    Object.entries(contactsA).every(([id, row]) => contactsB[id] && JSON.stringify({ ...row, sessionVersion: 0 }) === JSON.stringify({ ...contactsB[id], sessionVersion: 0 }) && contactsB[id].sessionVersion >= Math.max(row.sessionVersion + 1, Math.floor(Date.parse(a.takenAt) / 1000) - 1_767_225_600));
   if (!contactsMatch) problems.push("customer contacts differ");
   else console.log(`  contacts  ${Object.keys(contactsA).length} rows identical (session versions raised past anything they had reached)`);
   // Every staff session must end with a restore: the restored account's session version is exactly one higher.
@@ -97,7 +97,7 @@ try {
   const sameAccount = (id, row) =>
     usersB[id] &&
     JSON.stringify({ ...row, sessionVersion: 0 }) === JSON.stringify({ ...usersB[id], sessionVersion: 0 }) &&
-    usersB[id].sessionVersion >= Math.max(row.sessionVersion + 1, Math.floor(Date.parse(a.takenAt) / 1000));
+    usersB[id].sessionVersion >= Math.max(row.sessionVersion + 1, Math.floor(Date.parse(a.takenAt) / 1000) - 1_767_225_600);
   if (Object.keys(usersA).length !== Object.keys(usersB).length || !Object.entries(usersA).every(([id, row]) => sameAccount(id, row))) {
     problems.push("sign-in accounts differ, or a session version was not raised by one");
   } else console.log(`  accounts  ${Object.keys(usersA).length} rows identical (session versions raised past anything they had reached)`);

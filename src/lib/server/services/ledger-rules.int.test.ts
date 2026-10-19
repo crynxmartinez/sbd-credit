@@ -271,7 +271,7 @@ describe("the CSV exports reconcile to the books", () => {
     await recordEntry(id, entry("CHARGE", 25_00, { entryDate: addDays(TODAY, 10) }), EMPLOYEE);
     const { id: typoId } = await recordEntry(id, entry("CHARGE", 5_00), EMPLOYEE);
     await voidEntry(id, typoId, "Typo", ADMIN);
-    await reverseEntry(id, chargeId, { reason: "Wrong job" }, ADMIN).catch(() => undefined);
+    await reverseEntry(id, chargeId, { reason: "Wrong job" }, ADMIN);
 
     const csv = await ledgerCsv(TODAY);
     const rows = csv.trim().split("\r\n");

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { ADMIN, EMPLOYEE, alertWith, balanceText, drawer, newSession, openCustomer, requireCredentials, signIn, statusWith } from "./helpers";
+import { businessDaysAgo, ADMIN, EMPLOYEE, alertWith, balanceText, drawer, newSession, openCustomer, requireCredentials, signIn, statusWith } from "./helpers";
 
 const ORIGIN = process.env.E2E_ORIGIN ?? "http://127.0.0.1:3201";
 const NAME = "E2E Corrections Co";
@@ -13,11 +13,7 @@ let customerId = "";
 let oldChargeId = "";
 
 /** A date well inside a previous month, whatever today is: no month is longer than 31 days. */
-function daysAgo(days: number): string {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
+const daysAgo = businessDaysAgo;
 
 /**
  * The business day, as the SERVER sees it. The browser's own date can be a day ahead of the books (in the evening in the
@@ -142,6 +138,9 @@ test("the dashboard shows what has been written off", async () => {
   const customers = await (await page.request.get("/api/customers")).json();
   const total = customers.data.customers.reduce((sum: number, c: { writtenOffCents: number }) => sum + c.writtenOffCents, 0);
   expect(total).toBeGreaterThanOrEqual(60_00);
+  // The card shows exactly that total.
+  const dollars = (total / 100).toLocaleString("en-US", { minimumFractionDigits: total % 100 === 0 ? 0 : 2, maximumFractionDigits: 2 });
+  await expect(card.locator(".stat-value")).toHaveText(`$${dollars}`);
 });
 
 test("an employee is not offered write-off, reverse or void, and the server refuses them", async ({ browser }) => {

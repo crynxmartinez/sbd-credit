@@ -194,4 +194,19 @@ model AuditEvent {
   createdAt     DateTime     @default(now()) @db.Timestamptz(3)
 
   @@index([customerId, createdAt])
+  @@index([ledgerEntryId])
+}
+
+/// What an administrator did to sign-in accounts from the command line. Append-only. Not tied to a customer (those go in AuditEvent).
+model AccountEvent {
+  id             String   @id @default(cuid())
+  /// Who ran the command: the operating-system user on the machine it was run from.
+  actor          String
+  /// create | reset-password | deactivate | activate | unlock | end-all-sessions | erase-contact
+  action         String
+  targetUsername String?
+  details        Json?
+  createdAt      DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([createdAt])
 }

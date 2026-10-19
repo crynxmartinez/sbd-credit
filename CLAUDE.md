@@ -25,6 +25,7 @@ Own app, same Postgres database server as the Storage Materials shipper app.
 - `npm run restore-drill` — backs up a schema, restores it into a scratch one and compares every row (and restores an old-format copy with no write-off allocations, checking balances and that every write-off is allocated). Run it after touching the schema, backup or restore code
 - `npm run user -- list|create|reset-password|deactivate|activate|unlock|end-all-sessions` — sign-in accounts
 - `npm run e2e` — Playwright (Edge) against `credit_test_e2e`; run it after any UI or auth change
+- `scripts/grants.sql` is the ONE copy of the app role's grants (runbook Step C); `node scripts/verify-grants.mjs` checks them; the CI `grants` job runs both
 - Production runbook: `docs/PRODUCTION.md`
 - Customer portal: Phase 1 built; plan and what is next in `docs/PORTAL_PLAN.md`
 - `npm run test:db -- <name>` runs only the integration test files whose name contains it (e.g. `portal`)
@@ -36,6 +37,7 @@ Own app, same Postgres database server as the Storage Materials shipper app.
 - Write the test first for anything in `domain/`; run `npm run test:db` after touching services
 
 ## Domain rules
+- Tests that put dates on entries use the BUSINESS day (`businessDaysAgo` in `e2e/helpers.ts`, `businessToday` in services), never the machine's clock; `test:db` and `e2e` wait out the minutes before midnight in `BUSINESS_TIME_ZONE`.
 - Money is integer cents everywhere. Never floats. Display a broken amount as a dash, never "$0".
 - Every write goes through `transaction()` in `src/lib/server/tx.ts` (lock and statement timeouts, an honest "nothing was
   saved" vs "may or may not have been saved" answer). Creating a customer, recording an entry and reversing one carry a

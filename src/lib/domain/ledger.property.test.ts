@@ -64,8 +64,8 @@ describe("balance and aging invariants (any ledger)", () => {
 
   test("the order the entries are listed in changes nothing", () => {
     fc.assert(
-      fc.property(ledger, fc.nat(), (entries, seed) => {
-        const shuffled = [...entries].sort((a, b) => ((a.id.length * 31 + seed) % 7) - ((b.id.length * 31 + seed) % 7) || b.id.localeCompare(a.id));
+      // A genuine random permutation (fc.shuffledSubarray keeping every element), not one fixed reversal.
+      fc.property(ledger.chain((entries) => fc.tuple(fc.constant(entries), fc.shuffledSubarray(entries, { minLength: entries.length, maxLength: entries.length }))), ([entries, shuffled]) => {
         expect(computeAging(shuffled, ASOF)).toEqual(computeAging(entries, ASOF));
       }),
     );
