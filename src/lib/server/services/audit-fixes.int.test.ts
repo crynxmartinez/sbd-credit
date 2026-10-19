@@ -186,9 +186,10 @@ describe("customers and entries", () => {
     await expectApiError(recordEntry("no-such-customer", entry("CHARGE", 1_00), ADMIN), 404, "not_found");
   });
 
-  test("a negative adjustment on an account with no entries is refused (nothing to reduce)", async () => {
+  test("a negative adjustment on an approved account with no entries is accepted and leaves a credit balance (it is signed, like a payment)", async () => {
     const id = await approvedCustomer("Empty Adjust Co");
-    await expectApiError(recordEntry(id, entry("ADJUSTMENT", -5_00), ADMIN), 409, "invalid_state");
+    await recordEntry(id, entry("ADJUSTMENT", -5_00), ADMIN);
+    expect((await getDetail(id, TODAY)).customer.balanceCents).toBe(-5_00);
   });
 
   test("the over-limit warning starts exactly AT the limit, not above it", async () => {

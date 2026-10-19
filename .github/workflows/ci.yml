@@ -192,8 +192,9 @@ jobs:
           --health-retries 10
     env:
       ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
-      OWNER_URL: postgres://credit_owner:owner-pw@127.0.0.1:5432/postgres?schema=credit
-      APP_URL: postgres://credit_app:app-pw@127.0.0.1:5432/postgres?schema=credit
+      # psql and node-postgres take a plain address (the app's schema is its role's search_path); only Prisma reads ?schema=.
+      OWNER_URL: postgres://credit_owner:owner-pw@127.0.0.1:5432/postgres
+      APP_URL: postgres://credit_app:app-pw@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -216,7 +217,7 @@ jobs:
         run: npx prisma migrate deploy
         env:
           NODE_ENV: production
-          DATABASE_URL: ${{ env.OWNER_URL }}
+          DATABASE_URL: ${{ env.OWNER_URL }}?schema=credit
       - name: Step C - grants
         run: psql "$OWNER_URL" -v ON_ERROR_STOP=1 -f scripts/grants.sql
       - name: Step D - what the app's login can and cannot do

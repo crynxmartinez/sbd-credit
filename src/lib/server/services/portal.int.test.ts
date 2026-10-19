@@ -308,10 +308,10 @@ describe("signing in (one page for staff and customers)", () => {
     const locked = await activeContact(customerId);
     await prisma.customerUser.update({ where: { id: locked.id }, data: { lockedUntil: new Date(Date.now() + 3_600_000) } });
 
-    // A staff username that is ALSO a customer's email: ambiguous, so refused for both.
+    // A staff username that is ALSO a customer's email can no longer exist: the database refuses a staff name containing "@".
     const ambiguousEmail = unique("ambig");
-    const ambiguous = await activeContact(customerId, ambiguousEmail);
-    await staffUser(ambiguousEmail, GOOD_PASSWORD);
+    await activeContact(customerId, ambiguousEmail);
+    await expect(staffUser(ambiguousEmail, GOOD_PASSWORD)).rejects.toThrow(/AppUser_username_format/);
 
     const attempts: Array<[string, string]> = [
       [good.email, "the-wrong-password-9"],
@@ -319,7 +319,6 @@ describe("signing in (one page for staff and customers)", () => {
       [disabled.email, GOOD_PASSWORD],
       [notInvited.contact.email, GOOD_PASSWORD],
       [locked.email, GOOD_PASSWORD],
-      [ambiguousEmail, GOOD_PASSWORD],
       ["nobody.at.all", GOOD_PASSWORD],
     ];
     const compare = vi.spyOn(bcrypt, "compare");
@@ -336,9 +335,6 @@ describe("signing in (one page for staff and customers)", () => {
       compare.mockRestore();
     }
     expect(answers.size).toBe(1);
-
-    // The ambiguous name counted against neither account.
-    expect((await prisma.customerUser.findUniqueOrThrow({ where: { id: ambiguous.id } })).failedLogins).toBe(0);
   });
 
   test("a customer is NEVER locked out by wrong guesses, however many: their email is easy to find, so a stranger could lock them out", async () => {

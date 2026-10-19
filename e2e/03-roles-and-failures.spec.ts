@@ -74,6 +74,8 @@ test.describe("when things go wrong, the screen says so", () => {
 
   test("a failed refresh keeps the last good data and says how old it is", async ({ browser }) => {
     const { context, page } = await newSession(browser, ADMIN);
+    // A fake clock, so the 30-second background refresh can be made to happen now instead of waiting for it.
+    await page.clock.install();
     await page.goto("/customers");
     await expect(page.getByRole("button", { name: "Midwest Fabrication LLC", exact: true })).toBeVisible();
 
@@ -82,10 +84,8 @@ test.describe("when things go wrong, the screen says so", () => {
       refused += 1;
       return route.abort("failed");
     });
-    // Force a refetch the way a returning-to-the-tab does.
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await page.getByRole("link", { name: "Dashboard" }).first().click();
-    await page.getByRole("link", { name: "Customers" }).first().click();
+    // The background refresh comes due (every 30 s) and the server cannot be reached.
+    await page.clock.fastForward(31_000);
 
     // The refresh really failed, the person is TOLD so (with how old what they see is), and the last good data is still there.
     await expect.poll(() => refused).toBeGreaterThan(0);
