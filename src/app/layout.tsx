@@ -22,7 +22,8 @@ const THEME_SCRIPT = `(function(){try{var p=localStorage.getItem('credit-theme')
 
 // Downloaded at build time and served from this site. The CSS variables are what the design tokens refer to.
 const displayFont = Barlow_Semi_Condensed({ subsets: ["latin"], weight: ["500", "600", "700"], variable: "--font-display-face", display: "swap" });
-const bodyFont = Inter({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-body-face", display: "swap" });
+// A variable font: no weight list, or the same file is described four times over.
+const bodyFont = Inter({ subsets: ["latin"], variable: "--font-body-face", display: "swap" });
 // Figures only: loaded when a page uses them rather than preloaded on every page (the sign-in page needs none).
 const monoFont = IBM_Plex_Mono({ subsets: ["latin"], weight: ["500", "600"], variable: "--font-mono-face", display: "swap", preload: false });
 

@@ -13,7 +13,7 @@ import { afterSuccess, createFailureWatch, isLocked } from "./lockout";
 const failureWatch = createFailureWatch();
 
 /** At most this many password checks at once, and a few waiting. See hash-slots.ts for why. */
-const hashSlots = createHashSlots({ slots: 4, maxQueue: 24 });
+const hashSlots = createHashSlots({ slots: 2, maxQueue: 8 });
 
 let dummyHash: Promise<string> | undefined;
 

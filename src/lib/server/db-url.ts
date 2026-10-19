@@ -80,7 +80,7 @@ export function withExplicitSsl(url: string): string {
 /** Opening a connection to a remote database is slow, so idle ones are kept for a while instead of closed at once. */
 const POOL = {
   max: 10,
-  idleTimeoutMillis: 5 * 60_000,
+  idleTimeoutMillis: 30 * 60_000,
   connectionTimeoutMillis: 20_000,
   keepAlive: true,
   // Without a delay the operating system's default (two hours on Linux) applies, so a firewall that silently drops idle
@@ -107,7 +107,7 @@ export function poolConfigFor(connectionString: string, nodeEnv: string | undefi
     connectionString: withExplicitSsl(connectionString),
     ...POOL,
     // assertSafeTarget already limited the schema to letters, digits and underscores, so this cannot be abused.
-    ...(schema ? { options: `-c search_path=${schema} -c idle_in_transaction_session_timeout=${IDLE_IN_TRANSACTION_TIMEOUT}` } : {}),
+    ...(schema ? { options: `-c search_path=${schema} -c idle_in_transaction_session_timeout=${IDLE_IN_TRANSACTION_TIMEOUT} -c application_name=credit-tracker` } : {}),
   };
 }
 

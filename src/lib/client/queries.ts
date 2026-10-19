@@ -21,6 +21,9 @@ export function useCustomers({ poll = true }: { poll?: boolean } = {}) {
     queryKey: ["customers"],
     queryFn: () => apiFetch<CustomerListDto>("/api/customers"),
     refetchInterval: poll ? REFRESH_MS : false,
+    // The poll IS the retry: a second attempt straight after a slow or failed one doubles the load on a server that is struggling
+    // (and the abandoned first request still runs to the end there).
+    retry: poll ? false : 1,
     // A failed refresh keeps showing the last good data (with a notice) instead of blanking the screen.
     placeholderData: keepPreviousData,
   });

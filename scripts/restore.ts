@@ -19,7 +19,8 @@ import { PrismaClient } from "../src/generated/prisma/client";
 import { inBatches, reviveBackup } from "../src/lib/domain/backup";
 import { adapterFor } from "../src/lib/server/db-url";
 
-const BATCH_SIZE = 500;
+// Few, large inserts: each batch is one round trip, and over a remote link a million rows in batches of 500 was thousands of them.
+const BATCH_SIZE = 2_000;
 
 const file = process.argv[2];
 if (!file) {
@@ -86,7 +87,8 @@ async function main(): Promise<void> {
         }
       }
     },
-    { timeout: 300_000, maxWait: 30_000 },
+    // Scaled to the size of the file (about 20 ms a row, at least five minutes): a fixed limit would roll a big restore back.
+    { timeout: Math.max(300_000, (backup.counts.ledger + backup.counts.audit + backup.counts.customers) * 20), maxWait: 30_000 },
   );
 
   console.log(`restored from ${file}`);

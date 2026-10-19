@@ -24,39 +24,68 @@ export async function customersCsv(asOf: string): Promise<string> {
   return toCsv([header, ...rows]);
 }
 
-/** Every ledger entry, voided ones included and marked, so the export reconciles to the books. */
-export async function ledgerCsv(asOf: string): Promise<string> {
-  const entries = await prisma.ledgerEntry.findMany({
-    include: {
-      customer: { select: { businessName: true } },
-      writeOffAllocations: { include: { chargeEntry: { select: { reference: true, amountCents: true, entryDate: true } } }, orderBy: { createdAt: "asc" } },
-    },
-    orderBy: [{ entryDate: "desc" }, { createdAt: "desc" }, { id: "desc" }],
-  });
-  // An entry is "reversed" when a live entry points at it.
-  const reversed = new Set(entries.filter((e) => e.reversesEntryId !== null).map((e) => e.reversesEntryId));
-  const rows = entries.map((e) =>
-    ledgerCsvRow(
-      {
-        customerId: e.customerId,
-        businessName: e.customer.businessName,
-        type: e.type as LedgerType,
-        amountCents: e.amountCents,
-        entryDate: dbDateToIso(e.entryDate) ?? "",
-        dueDate: dbDateToIso(e.dueDate),
-        reference: e.reference,
-        note: e.note,
-        createdBy: e.createdBy,
-        voided: e.voidedAt !== null,
-        voidReason: e.voidReason,
-        reversed: reversed.has(e.id),
-        isReversal: e.type === "REVERSAL",
-        writtenOffAgainst: e.writeOffAllocations
-          .map((a) => `${a.chargeEntry.reference ?? `charge of ${formatCents(a.chargeEntry.amountCents, { fixed: true })} dated ${dbDateToIso(a.chargeEntry.entryDate) ?? ""}`} (${formatCents(a.amountCents, { fixed: true })})`)
-          .join("; "),
+/** Rows read from the database at a time. Small enough to keep memory flat, large enough that the round trips stay few. */
+const LEDGER_PAGE_SIZE = 2_000;
+
+/**
+ * Every ledger entry, voided ones included and marked, so the export reconciles to the books, produced a page at a time.
+ *
+ * It used to read the whole ledger into memory, build every row, join them into one string and then copy that string again with a
+ * byte-order mark on the front: at hundreds of thousands of rows that was gigabytes and several seconds with the whole server
+ * stalled. Pages are read by id (a stable order that needs no sort over the whole table), turned into text, and handed on; the
+ * event loop gets a turn between pages. Rows come out in the order they were recorded.
+ */
+export async function* ledgerCsvChunks(asOf: string, pageSize: number = LEDGER_PAGE_SIZE): AsyncGenerator<string> {
+  yield toCsv([[...LEDGER_CSV_HEADER]]);
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await prisma.ledgerEntry.findMany({
+      take: pageSize,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      orderBy: { id: "asc" },
+      include: {
+        customer: { select: { businessName: true } },
+        // An entry is "reversed" when a reversal points at it.
+        reversedBy: { select: { id: true } },
+        writeOffAllocations: { include: { chargeEntry: { select: { reference: true, amountCents: true, entryDate: true } } }, orderBy: { createdAt: "asc" } },
       },
-      asOf,
-    ),
-  );
-  return toCsv([[...LEDGER_CSV_HEADER], ...rows]);
+    });
+    if (page.length === 0) return;
+    cursor = page[page.length - 1]!.id;
+    yield toCsv(
+      page.map((e) =>
+        ledgerCsvRow(
+          {
+            customerId: e.customerId,
+            businessName: e.customer.businessName,
+            type: e.type as LedgerType,
+            amountCents: e.amountCents,
+            entryDate: dbDateToIso(e.entryDate) ?? "",
+            dueDate: dbDateToIso(e.dueDate),
+            reference: e.reference,
+            note: e.note,
+            createdBy: e.createdBy,
+            voided: e.voidedAt !== null,
+            voidReason: e.voidReason,
+            reversed: e.reversedBy !== null,
+            isReversal: e.type === "REVERSAL",
+            writtenOffAgainst: e.writeOffAllocations
+              .map((a) => `${a.chargeEntry.reference ?? `charge of ${formatCents(a.chargeEntry.amountCents, { fixed: true })} dated ${dbDateToIso(a.chargeEntry.entryDate) ?? ""}`} (${formatCents(a.amountCents, { fixed: true })})`)
+              .join("; "),
+          },
+          asOf,
+        ),
+      ),
+    );
+    if (page.length < pageSize) return;
+    // A turn for everything else the server is doing.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+/** The whole ledger CSV as one string (for tests and small uses; the download streams it). */
+export async function ledgerCsv(asOf: string, pageSize?: number): Promise<string> {
+  let text = "";
+  for await (const chunk of ledgerCsvChunks(asOf, pageSize)) text += chunk;
+  return text;
 }

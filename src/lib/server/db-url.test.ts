@@ -89,6 +89,10 @@ describe("connection robustness", () => {
   test("a connection left in the middle of a transaction (a crashed process) is cut off, so it cannot hold a customer's lock", () => {
     expect(config().options).toContain("idle_in_transaction_session_timeout=30s");
     expect(config().options).toContain("search_path=credit_dev"); // and the schema pin is still there
+    // On a server shared with another application, this app's connections must be recognisable in pg_stat_activity.
+    expect(config().options).toContain("application_name=credit-tracker");
+    // Opening a connection to a remote database costs several round trips: idle ones are kept for half an hour.
+    expect(config().idleTimeoutMillis).toBe(30 * 60_000);
   });
 });
 

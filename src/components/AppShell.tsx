@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { closeUrlPanel, pushUrlParams } from "@/lib/client/url-state";
 import type { CustomerSummary, SessionUser } from "@/lib/types";
 import { SessionExpiredBanner } from "./SessionExpiredBanner";
@@ -18,6 +18,16 @@ type ModalState = { mode: "new" } | { mode: "edit"; customer: CustomerSummary } 
 const DRAWER_PARAM = "c";
 
 export function AppShell({ user, children }: { user: SessionUser; children: ReactNode }) {
+  // The customer drawer and the forms are loaded on demand, but there is no reason to make the first click wait for them: fetch them
+  // shortly after the page is up (a lazy chunk with the validation library was the visible delay on the first open).
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void import("./CustomerDrawer");
+      void import("./CustomerFormModal");
+    }, 1_500);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   const searchParams = useSearchParams();
   const [modal, setModal] = useState<ModalState>(null);
   const openCustomerId = searchParams.get(DRAWER_PARAM);

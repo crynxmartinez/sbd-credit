@@ -59,7 +59,8 @@ export function toLedgerRecord(
 /** A ledger row, plus whether a reversal has been recorded against it. */
 export type LedgerRow = LedgerEntry & { reversedBy: { id: string } | null } & WithAllocations;
 
-export function toLedgerDto(row: LedgerRow, cover: { liveCents: number; ever: boolean } = { liveCents: 0, ever: false }): LedgerEntryDto {
+export function toLedgerDto(row: LedgerRow, cover: { liveCents: number; ever: boolean } | undefined): LedgerEntryDto {
+  const covered = cover ?? { liveCents: 0, ever: false };
   return {
     id: row.id,
     type: row.type as LedgerType,
@@ -77,8 +78,8 @@ export function toLedgerDto(row: LedgerRow, cover: { liveCents: number; ever: bo
     reversesId: row.reversesEntryId,
     reversed: row.reversedBy !== null,
     covers: row.writeOffAllocations.map((allocation) => ({ chargeId: allocation.chargeEntryId, amountCents: allocation.amountCents })),
-    writtenOffCents: cover.liveCents,
-    everWrittenOff: cover.ever,
+    writtenOffCents: covered.liveCents,
+    everWrittenOff: covered.ever,
   };
 }
 

@@ -1,17 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  addDays,
-  dbDateToIso,
-  dateInZone,
-  diffDays,
-  isInClosedMonth,
-  dueDateFor,
-  formatDate,
-  isoToDbDate,
-  isValidISODate,
-  termDays,
-  todayISO,
-} from "./dates";
+import { addDays, dbDateToIso, dateInZone, diffDays, isInClosedMonth, dueDateFor, formatDate, isoToDbDate, isValidISODate, termDays, todayISO, compareText } from "./dates";
 
 describe("todayISO", () => {
   test("uses the LOCAL calendar day, not the UTC day, whatever zone the tests run in", () => {
@@ -131,5 +119,27 @@ describe("dateInZone", () => {
   test("an audit timestamp is shown on the day the books say it happened", () => {
     // 11:30pm Chicago on the 1st is already the 2nd in UTC: a viewer in UTC must still see the 1st.
     expect(dateInZone(new Date("2026-11-02T05:30:00Z"), "America/Chicago")).toBe("2026-11-01");
+  });
+});
+
+describe("compareText", () => {
+  test("orders ISO dates and ids by plain character order, which for them is calendar order", () => {
+    expect(compareText("2026-10-01", "2026-10-02")).toBeLessThan(0);
+    expect(compareText("2026-10-02", "2026-10-01")).toBeGreaterThan(0);
+    expect(compareText("2026-10-01", "2026-10-01")).toBe(0);
+    expect(["b", "a10", "a2", "a"].sort(compareText)).toEqual(["a", "a10", "a2", "b"]);
+  });
+  test("agrees with localeCompare on the ASCII ids and dates the ledger sorts", () => {
+    const values = ["2026-01-31", "2026-02-01", "cmv8nj3nz000m7stw", "cmv8nj3ny000m7stw", "c0", "c9", "ca"];
+    for (const a of values) for (const b of values) expect(Math.sign(compareText(a, b))).toBe(Math.sign(a.localeCompare(b)));
+  });
+});
+
+describe("dateInZone with the same zone many times", () => {
+  test("gives the same answers (the formatter is built once per zone)", () => {
+    const moment = new Date("2026-10-20T03:30:00Z");
+    expect(dateInZone(moment, "America/Chicago")).toBe("2026-10-19");
+    expect(dateInZone(moment, "America/Chicago")).toBe("2026-10-19");
+    expect(dateInZone(moment, "Asia/Manila")).toBe("2026-10-20");
   });
 });

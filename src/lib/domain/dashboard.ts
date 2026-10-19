@@ -1,11 +1,27 @@
 import type { CustomerSummary, DashboardDto } from "../types";
 import { computeAlerts } from "./alerts";
 import { AGING_BUCKETS, type AgingBucket } from "./constants";
+import { compareText } from "./dates";
 
 const RECENT_LIMIT = 5;
 
 function emptyBuckets(): Record<AgingBucket, number> {
   return Object.fromEntries(AGING_BUCKETS.map((bucket) => [bucket, 0])) as Record<AgingBucket, number>;
+}
+
+/** The few most recently updated customers, found in one pass (sorting every customer to keep five was the cost on a long list). */
+function newestFirst(customers: readonly CustomerSummary[], limit: number): CustomerSummary[] {
+  const top: CustomerSummary[] = [];
+  for (const customer of customers) {
+    const index = top.findIndex((kept) => compareText(customer.updatedAt, kept.updatedAt) > 0);
+    if (index === -1) {
+      if (top.length < limit) top.push(customer);
+    } else {
+      top.splice(index, 0, customer);
+      if (top.length > limit) top.pop();
+    }
+  }
+  return top;
 }
 
 export function buildDashboard(customers: readonly CustomerSummary[], asOf: string): DashboardDto {
@@ -18,7 +34,7 @@ export function buildDashboard(customers: readonly CustomerSummary[], asOf: stri
     return next;
   }, emptyBuckets());
 
-  const recent = [...customers].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, RECENT_LIMIT);
+  const recent = newestFirst(customers, RECENT_LIMIT);
 
   return {
     stats: {
