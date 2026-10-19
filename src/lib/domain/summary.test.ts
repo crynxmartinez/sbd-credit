@@ -1,3 +1,4 @@
+import fc from "fast-check";
 import { describe, expect, test } from "vitest";
 import type { CustomerBase } from "../types";
 import { buildDashboard } from "./dashboard";
@@ -133,5 +134,17 @@ describe("buildDashboard", () => {
 
   test("an empty list gives zeroes, not errors", () => {
     expect(buildDashboard([], ASOF).stats).toMatchObject({ totalCustomers: 0, needsAttention: 0 });
+  });
+});
+
+describe("buildDashboard recent: the same five a full sort would give", () => {
+  test("for any list, including ties and short lists", () => {
+    fc.assert(
+      fc.property(fc.array(fc.integer({ min: 0, max: 12 }), { maxLength: 25 }), (days) => {
+        const list = days.map((day, index) => toSummary(base({ id: `p${index}`, updatedAt: `2026-10-${String(day + 1).padStart(2, "0")}T00:00:00.000Z` }), [], ASOF));
+        const expected = [...list].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0)).slice(0, 5).map((c) => c.id);
+        expect(buildDashboard(list, ASOF).recent.map((c) => c.id)).toEqual(expected);
+      }),
+    );
   });
 });

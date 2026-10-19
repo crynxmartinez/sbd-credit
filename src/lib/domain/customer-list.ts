@@ -1,3 +1,4 @@
+import { compareText } from "./dates";
 import type { CustomerSummary } from "../types";
 import type { CustomerStatus } from "./constants";
 
@@ -36,7 +37,7 @@ function compareBy(key: SortKey, a: CustomerSummary, b: CustomerSummary): number
     case "utilization":
       return a.utilizationPct - b.utilizationPct;
     case "nextDue":
-      return (a.nextDueDate ?? "").localeCompare(b.nextDueDate ?? "");
+      return compareText(a.nextDueDate ?? "", b.nextDueDate ?? "");
   }
 }
 

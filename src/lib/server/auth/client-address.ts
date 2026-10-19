@@ -57,3 +57,10 @@ export function trustedHopsFromEnv(value: string | undefined): number {
   const parsed = Number(value ?? "1");
   return Number.isInteger(parsed) && parsed >= 0 && parsed <= 5 ? parsed : 1;
 }
+
+/** True when a proxy is expected but the request carries no usable address: the limits would treat every visitor as one. */
+export function forwardedAddressMissing(headers: { get(name: string): string | null }, trustedHops = 1): boolean {
+  if (trustedHops <= 0) return false;
+  const forwarded = headers.get("x-forwarded-for");
+  return !forwarded || forwarded.split(",").every((entry) => entry.trim() === "");
+}

@@ -13,5 +13,5 @@ export function POST(request: NextRequest, { params }: Context) {
     const { id } = await params;
     const result = await recordEntry(id, await readJson(request, ledgerEntrySchema), user);
     return ok(result, 201);
-  });
+  }, { request });
 }

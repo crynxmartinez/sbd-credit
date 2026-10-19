@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { BACKUP_FORMAT, inBatches, reviveBackup, sessionVersionAfterRestore } from "./backup";
+import { BACKUP_FORMAT, SESSION_EPOCH_SECONDS, inBatches, reviveBackup, sessionVersionAfterRestore } from "./backup";
 
 function file(overrides: Record<string, unknown> = {}) {
   return {
@@ -179,7 +179,7 @@ describe("write-off allocations in a backup", () => {
 
 describe("sessionVersionAfterRestore", () => {
   const NOW = Date.UTC(2026, 9, 18, 12, 0, 0); // a real clock reading, in milliseconds
-  const SECONDS = Math.floor(NOW / 1000);
+  const SECONDS = Math.floor(NOW / 1000) - SESSION_EPOCH_SECONDS;
 
   test("is one higher than the backed-up version when that is already ahead of the clock", () => {
     expect(sessionVersionAfterRestore(SECONDS + 50, NOW)).toBe(SECONDS + 51);
@@ -201,7 +201,45 @@ describe("sessionVersionAfterRestore", () => {
     expect(reviveBackup(withContact, NOW).portalContacts[0]!.sessionVersion).toBe(SECONDS);
   });
 
-  test("fits the database column (a 32-bit integer) for decades", () => {
+  test("fits the database column (a 32-bit integer) until the 2090s: it counts seconds from 2026, not from 1970", () => {
+    expect(SESSION_EPOCH_SECONDS).toBe(Date.UTC(2026, 0, 1) / 1000);
     expect(SECONDS).toBeLessThan(2 ** 31 - 1);
+    // The latest day it still fits: 2^31 - 1 seconds after 2026-01-01 is in the year 2094.
+    expect(new Date((SESSION_EPOCH_SECONDS + 2 ** 31 - 1) * 1000).getUTCFullYear()).toBeGreaterThanOrEqual(2094);
+    // An account the old rule restored (a count near 1.79 billion) is still moved FORWARD, never back.
+    expect(sessionVersionAfterRestore(1_790_000_000, NOW)).toBe(1_790_000_001);
+  });
+});
+
+describe("sign-in accounts are counted like every other section", () => {
+  const user = { id: "u1", username: "dana", name: "Dana", role: "ADMIN", active: true };
+  const withCount = (users: unknown, usersCount: number | undefined) =>
+    file({ users, counts: { customers: 1, ledger: 1, audit: 1, ...(usersCount === undefined ? {} : { users: usersCount }) } });
+
+  test("a file that says how many accounts it has is held to it: a truncated or missing section is refused", () => {
+    expect(() => reviveBackup(withCount([user], 2))).toThrow(/incomplete.*users/);
+    expect(() => reviveBackup(withCount(undefined, 1))).toThrow(/incomplete.*users/);
+    expect(reviveBackup(withCount([user], 1)).users).toHaveLength(1);
+  });
+
+  test("an older file with no count for accounts still restores", () => {
+    expect(reviveBackup(withCount([user], undefined)).users).toHaveLength(1);
+  });
+});
+
+describe("customer values that only a damaged file could hold", () => {
+  const withTerms = (paymentTerms: unknown) => {
+    const base = file();
+    return file({ customers: [{ ...base.customers[0], paymentTerms }] });
+  };
+
+  test("unknown payment terms are refused, because the due dates would silently become Net 30", () => {
+    expect(() => reviveBackup(withTerms("Net 365"))).toThrow(/paymentTerms/);
+    expect(() => reviveBackup(withTerms(30))).toThrow(/paymentTerms/);
+  });
+
+  test("known terms, and a customer with none recorded, are fine", () => {
+    for (const terms of ["Net 15", "Net 30", "Net 45", "Net 60", "Net 90", "Due on receipt", "COD"]) expect(() => reviveBackup(withTerms(terms))).not.toThrow();
+    expect(() => reviveBackup(withTerms(undefined))).not.toThrow();
   });
 });

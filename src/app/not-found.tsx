@@ -1,5 +1,7 @@
 import Link from "next/link";
 
+export const metadata = { title: "Page not found — Steel Building Depot" };
+
 export default function NotFound() {
   return (
     <main className="login-wrap">

@@ -186,7 +186,8 @@ test("a customer opened from a pasted link closes for good: Close with a form op
   await drawer(page).getByRole("button", { name: "Close customer details" }).click();
   await expect.poll(() => asked.message()).toMatch(/form open/i);
   await expect(drawer(page)).toHaveCount(0);
-  await page.waitForTimeout(1_500); // long enough for a wrongly-reopened drawer to appear
-  await expect(drawer(page)).toHaveCount(0);
+  // Stays closed: held for a while with a polling check (a wrongly reopened drawer would appear within it), not a fixed sleep.
+  const started = Date.now();
+  await expect.poll(async () => (await drawer(page).count()) === 0 && Date.now() - started, { timeout: 10_000, intervals: [250] }).toBeGreaterThan(1_500);
   await expect(page).not.toHaveURL(/[?&]c=/);
 });

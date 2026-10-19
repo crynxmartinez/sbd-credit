@@ -178,8 +178,10 @@ test("a confirmation message can be dismissed, and an error message stays until 
   await page.getByRole("button", { name: "Customers CSV" }).click();
   const failure = alertWith(page, "The export failed on the server.");
   await expect(failure).toBeVisible();
-  await page.waitForTimeout(7_500); // longer than a confirmation lasts
-  await expect(failure).toBeVisible(); // an error does not fade by itself
+  // An error does not fade by itself: it is still there after longer than a confirmation lasts (6 s). Held with a polling check,
+  // not a fixed sleep, so a slow machine neither passes by accident nor fails by timing.
+  const started = Date.now();
+  await expect.poll(async () => (await failure.isVisible()) && Date.now() - started, { timeout: 15_000, intervals: [500] }).toBeGreaterThan(7_000);
   await failure.getByRole("button", { name: "Dismiss message" }).click();
   await expect(failure).toHaveCount(0);
 });

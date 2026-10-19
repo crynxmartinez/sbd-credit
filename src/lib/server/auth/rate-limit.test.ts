@@ -49,8 +49,9 @@ describe("createRateLimiter", () => {
     let now = 0;
     const limiter = createRateLimiter({ limit: 1, windowMs: 100, now: () => now, maxKeys: 3 });
     ["a", "b", "c"].forEach((key) => limiter.take(key));
-    now = 500;
+    now = 500; // all three are long past their window
     limiter.take("d");
-    expect(limiter.size()).toBeLessThanOrEqual(3);
+    // Idle keys are dropped, not just capped: only the new key is remembered.
+    expect(limiter.size()).toBe(1);
   });
 });

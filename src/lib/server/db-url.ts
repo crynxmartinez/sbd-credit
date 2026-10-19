@@ -7,7 +7,8 @@ import { PrismaPg } from "@prisma/adapter-pg";
  * client, the live website included, so a schema on a pooled address is refused outright. Outside production, only the
  * credit_dev / credit_test* schemas are allowed, so a developer machine can never be pointed at live data by accident.
  */
-const DEV_SCHEMA_PATTERN = /^credit_(dev|test)[a-z0-9_]*$/;
+// The same rule as scripts/lib/dev-db-url.mjs: credit_dev, credit_test, credit_test_<name>; never a look-alike such as credit_devious.
+const DEV_SCHEMA_PATTERN = /^credit_(dev|test)(_[a-z0-9]+)*$/;
 const PRODUCTION_SCHEMA = "credit";
 
 export function schemaFromUrl(url: string): string | undefined {
@@ -80,7 +81,7 @@ export function withExplicitSsl(url: string): string {
 /** Opening a connection to a remote database is slow, so idle ones are kept for a while instead of closed at once. */
 const POOL = {
   max: 10,
-  idleTimeoutMillis: 5 * 60_000,
+  idleTimeoutMillis: 30 * 60_000,
   connectionTimeoutMillis: 20_000,
   keepAlive: true,
   // Without a delay the operating system's default (two hours on Linux) applies, so a firewall that silently drops idle
@@ -107,7 +108,7 @@ export function poolConfigFor(connectionString: string, nodeEnv: string | undefi
     connectionString: withExplicitSsl(connectionString),
     ...POOL,
     // assertSafeTarget already limited the schema to letters, digits and underscores, so this cannot be abused.
-    ...(schema ? { options: `-c search_path=${schema} -c idle_in_transaction_session_timeout=${IDLE_IN_TRANSACTION_TIMEOUT}` } : {}),
+    ...(schema ? { options: `-c search_path=${schema} -c idle_in_transaction_session_timeout=${IDLE_IN_TRANSACTION_TIMEOUT} -c application_name=credit-tracker` } : {}),
   };
 }
 

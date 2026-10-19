@@ -50,6 +50,9 @@ interface FormatOptions {
   fixed?: boolean;
 }
 
+// One formatter for every call: building a new one each time was measurable on a page of thousands of rows.
+const WHOLE_DOLLARS = new Intl.NumberFormat("en-US");
+
 export function formatCents(cents: number, options: FormatOptions = {}): string {
   // A missing or broken amount shows as a dash. Showing "$0" would pass a data fault off as a real zero balance.
   if (!Number.isFinite(cents)) return "—";
@@ -58,7 +61,7 @@ export function formatCents(cents: number, options: FormatOptions = {}): string 
   const abs = Math.abs(safe);
   const dollars = Math.floor(abs / 100);
   const remainder = abs % 100;
-  const wholePart = dollars.toLocaleString("en-US");
+  const wholePart = WHOLE_DOLLARS.format(dollars);
 
   if (remainder === 0 && !options.fixed) return `${sign}$${wholePart}`;
   return `${sign}$${wholePart}.${String(remainder).padStart(2, "0")}`;

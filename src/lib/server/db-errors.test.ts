@@ -64,3 +64,12 @@ describe("isTransientError", () => {
     expect(isTransientError(new Error("boom"))).toBe(false);
   });
 });
+
+describe("the driver's own wording for a connection that never opened", () => {
+  test("\"Connection terminated due to connection timeout\" is NOT an unknown outcome: the connection never existed, so nothing was written", () => {
+    expect(classifyDbError(new Error("Connection terminated due to connection timeout"))).toBe("not_saved");
+  });
+  test("a connection that WAS open and then dropped still is", () => {
+    expect(classifyDbError(new Error("Connection terminated unexpectedly"))).toBe("unknown_outcome");
+  });
+});

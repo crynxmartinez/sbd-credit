@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { computeAging, writtenOffCents, type LedgerRecord } from "./ledger";
-import { allocatableTargets, allocationsTo, liveAllocationCents, planWriteOffAllocation, sameAllocations, writeOffCover, writeOffTargets, type AllocationTarget } from "./write-off";
+import { allocatableTargets, allocationsTo, liveAllocationCents, planWriteOffAllocation, sameAllocations, writeOffCover, writeOffCoverMap, writeOffTargets, type AllocationTarget } from "./write-off";
 
 let counter = 0;
 function entry(overrides: Partial<LedgerRecord> & Pick<LedgerRecord, "type" | "amountCents">): LedgerRecord {
@@ -249,5 +249,23 @@ describe("writeOffCover", () => {
   test("a voided write-off leaves no trace, and an untouched charge has none", () => {
     expect(writeOffCover([A, voidedOne], "Z1")).toEqual({ liveCents: 0, ever: false });
     expect(writeOffCover([A, live], "other")).toEqual({ liveCents: 0, ever: false });
+  });
+});
+
+describe("writeOffCoverMap agrees with writeOffCover for every entry", () => {
+  const A = entry({ id: "M1", type: "CHARGE", amountCents: 100_00, entryDate: "2026-06-01" });
+  const B = entry({ id: "M2", type: "CHARGE", amountCents: 100_00, entryDate: "2026-06-02" });
+  const live = entry({ id: "MW1", type: "WRITE_OFF", amountCents: 60_00, entryDate: "2026-10-01", writeOffAllocations: [{ chargeId: "M1", amountCents: 60_00 }] });
+  const undone = entry({ id: "MW2", type: "WRITE_OFF", amountCents: 5_00, entryDate: "2026-10-01", writeOffAllocations: [{ chargeId: "M2", amountCents: 5_00 }] });
+  const reversal = entry({ type: "REVERSAL", amountCents: 5_00, entryDate: "2026-10-02", reverses: "MW2" });
+  const voided = entry({ id: "MW3", type: "WRITE_OFF", amountCents: 9_00, entryDate: "2026-10-01", voided: true, writeOffAllocations: [{ chargeId: "M1", amountCents: 9_00 }] });
+  const all = [A, B, live, undone, reversal, voided];
+
+  test("same answer as asking one entry at a time", () => {
+    const map = writeOffCoverMap(all);
+    for (const record of all) expect(map.get(record.id) ?? { liveCents: 0, ever: false }).toEqual(writeOffCover(all, record.id));
+  });
+  test("an entry nothing covers is simply absent from the map", () => {
+    expect(writeOffCoverMap([A]).get("M1")).toBeUndefined();
   });
 });

@@ -5,7 +5,7 @@ import { can, type Action } from "@/lib/domain/roles";
 import { computeAging } from "@/lib/domain/ledger";
 import { toSummary } from "@/lib/domain/summary";
 import { applyDecision, hasCreditLine } from "@/lib/domain/status";
-import { writeOffCover } from "@/lib/domain/write-off";
+import { writeOffCoverMap } from "@/lib/domain/write-off";
 import { formatCents } from "@/lib/domain/money";
 import { dbDateToIso, isoToDbDate } from "@/lib/domain/dates";
 import type { CustomerStatus } from "@/lib/domain/constants";
@@ -40,23 +40,34 @@ const stale = () =>
   new ApiError(409, "stale", "Someone else changed this customer. Reload to see the latest, then try again.");
 
 export async function listSummaries(asOf: string): Promise<CustomerSummary[]> {
-  const [customers, entries] = await Promise.all([
+  const [customers, entries, allocations] = await Promise.all([
     prisma.customer.findMany({ orderBy: { businessName: "asc" } }),
     // Voided entries never affect a balance or an aging bucket, so there is no reason to read them here.
     prisma.ledgerEntry.findMany({
       where: { voidedAt: null },
-      select: {
-        id: true, customerId: true, type: true, amountCents: true, entryDate: true, dueDate: true, voidedAt: true, reversesEntryId: true,
-        writeOffAllocations: { select: { chargeEntryId: true, amountCents: true } },
-      },
+      select: { id: true, customerId: true, type: true, amountCents: true, entryDate: true, dueDate: true, voidedAt: true, reversesEntryId: true },
+    }),
+    // Which charges each write-off covers: a short table of its own, read once, instead of a join attached to EVERY ledger row (nearly
+    // all of which are not write-offs). Only the write-offs still on the books matter.
+    prisma.writeOffAllocation.findMany({
+      where: { writeOffEntry: { voidedAt: null } },
+      select: { writeOffEntryId: true, chargeEntryId: true, amountCents: true },
     }),
   ]);
 
+  const allocationsOf = new Map<string, Array<{ chargeEntryId: string; amountCents: number }>>();
+  for (const allocation of allocations) {
+    const list = allocationsOf.get(allocation.writeOffEntryId);
+    if (list) list.push(allocation);
+    else allocationsOf.set(allocation.writeOffEntryId, [allocation]);
+  }
+
   const byCustomer = new Map<string, ReturnType<typeof toLedgerRecord>[]>();
   for (const entry of entries) {
+    const record = toLedgerRecord({ ...entry, writeOffAllocations: allocationsOf.get(entry.id) ?? [] });
     const list = byCustomer.get(entry.customerId);
-    if (list) list.push(toLedgerRecord(entry));
-    else byCustomer.set(entry.customerId, [toLedgerRecord(entry)]);
+    if (list) list.push(record);
+    else byCustomer.set(entry.customerId, [record]);
   }
   return customers.map((row) => toSummary(toCustomerBase(row), byCustomer.get(row.id) ?? [], asOf));
 }
@@ -76,10 +87,11 @@ export async function getDetail(id: string, asOf: string): Promise<CustomerDetai
   if (!row) throw notFound();
 
   const records = row.ledger.map(toLedgerRecord);
+  const coverOf = writeOffCoverMap(records);
   return {
     customer: toSummary(toCustomerBase(row), records, asOf),
     aging: computeAging(records, asOf),
-    ledger: row.ledger.map((entry) => toLedgerDto(entry, writeOffCover(records, entry.id))),
+    ledger: row.ledger.map((entry) => toLedgerDto(entry, coverOf.get(entry.id))),
     audit: row.audit.map(toAuditDto),
   };
 }
@@ -180,7 +192,14 @@ export async function updateCustomer(id: string, input: CustomerUpdateInput, act
   await transaction(async (tx) => {
     const result = await tx.customer.updateMany({
       where: { id, version: expectedVersion },
-      data: { ...next, dateApplied: isoToDbDate(profile.dateApplied), version: { increment: 1 } },
+      data: {
+        ...next,
+        dateApplied: isoToDbDate(profile.dateApplied),
+        // An application still waiting has been waiting since it was SUBMITTED: correcting that date moves the clock the "awaiting
+        // review for N days" alert counts from, or the two dates would silently disagree.
+        ...(current.status === "submitted" ? { statusChangedOn: isoToDbDate(profile.dateApplied) } : {}),
+        version: { increment: 1 },
+      },
     });
     if (result.count === 0) throw stale();
     await writeAudit(tx, {

@@ -9,11 +9,12 @@
  *
  * This is the portable export. For production, also take a database-level backup (pg_dump -Fc -n credit): see docs/PRODUCTION.md.
  */
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { BACKUP_FORMAT, type BackupFile } from "../src/lib/domain/backup";
 import { adapterFor, schemaFromUrl } from "../src/lib/server/db-url";
+import { writeBackupJson } from "./lib/write-backup-file.mjs";
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) throw new Error("DATABASE_URL is not set. Run this through `npm run backup`.");
@@ -50,7 +51,7 @@ async function main(): Promise<void> {
     format: BACKUP_FORMAT,
     schema,
     takenAt: new Date().toISOString(),
-    counts: { customers: snapshot.customers.length, ledger: snapshot.ledger.length, audit: snapshot.audit.length, portalContacts: snapshot.portalContacts.length, writeOffAllocations: snapshot.writeOffAllocations.length },
+    counts: { customers: snapshot.customers.length, ledger: snapshot.ledger.length, audit: snapshot.audit.length, portalContacts: snapshot.portalContacts.length, writeOffAllocations: snapshot.writeOffAllocations.length, users: snapshot.users.length },
     customers: snapshot.customers,
     ledger: snapshot.ledger,
     audit: snapshot.audit,
@@ -65,8 +66,9 @@ async function main(): Promise<void> {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const finalPath = join(dir, `credit-${schema}-${stamp}.json`);
   const partialPath = `${finalPath}.partial`;
-  // Owner-only: the file holds customer names, contacts, balances and the audit log.
-  writeFileSync(partialPath, JSON.stringify(file, null, 2), { mode: 0o600 });
+  // Owner-only (the file holds customer names, contacts, balances and the audit log), written a row at a time so a very large
+  // backup is not limited by the biggest string the engine can hold.
+  writeBackupJson(partialPath, file, 0o600);
   renameSync(partialPath, finalPath);
 
   console.log(`backup written: ${finalPath}`);

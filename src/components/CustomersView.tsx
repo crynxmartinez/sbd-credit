@@ -30,6 +30,8 @@ const FILTERS: ReadonlyArray<{ value: StatusFilter; label: string }> = [
   ...CUSTOMER_STATUSES.map((status) => ({ value: status, label: STATUS_LABELS[status] })),
 ];
 
+const SORT_LABELS: Record<SortKey, string> = { name: "business", status: "status", limit: "credit limit", balance: "balance", utilization: "utilization", nextDue: "next payment due" };
+
 function isStatusFilter(value: string | null): value is StatusFilter {
   return value === "all" || (value !== null && (CUSTOMER_STATUSES as readonly string[]).includes(value));
 }
@@ -73,15 +75,34 @@ export function CustomersView() {
     direction: searchParams.get("dir") === "desc" ? "desc" : "asc",
   });
 
+  // The filters as the address bar says them. When it changes for a reason that is NOT this screen writing it (the sidebar's
+  // "Customers" link, Back, a pasted link), the screen follows it, so what is shown always matches the address.
+  const paramsKey = `${searchParams.get("q") ?? ""}|${searchParams.get("status") ?? ""}|${searchParams.get("sort") ?? ""}|${searchParams.get("dir") ?? ""}`;
+  const [seenKey, setSeenKey] = useState(paramsKey);
+  const [writtenKey, setWrittenKey] = useState(paramsKey);
+  if (paramsKey !== seenKey) {
+    setSeenKey(paramsKey);
+    if (paramsKey !== writtenKey) {
+      const nextStatus = searchParams.get("status");
+      const nextSort = searchParams.get("sort");
+      setText(searchParams.get("q") ?? "");
+      setStatus(isStatusFilter(nextStatus) ? nextStatus : "all");
+      setSort({ key: isSortKey(nextSort) ? nextSort : "name", direction: searchParams.get("dir") === "desc" ? "desc" : "asc" });
+      setWrittenKey(paramsKey);
+    }
+  }
+
   // Keep filters in the address bar so a filtered list can be shared or bookmarked. The open customer (?c=) is kept.
   useEffect(() => {
     const timer = setTimeout(() => {
-      replaceUrlParams({
+      const next = {
         q: text.trim(),
         status: status === "all" ? null : status,
         sort: sort.key === "name" ? null : sort.key,
         dir: sort.direction === "asc" ? null : sort.direction,
-      });
+      };
+      setWrittenKey(`${next.q}|${next.status ?? ""}|${next.sort ?? ""}|${next.dir ?? ""}`);
+      replaceUrlParams(next);
     }, SEARCH_URL_DELAY_MS);
     return () => clearTimeout(timer);
   }, [text, status, sort]);
@@ -92,7 +113,8 @@ export function CustomersView() {
     [customers, status, text, sort],
   );
 
-  const shown = useSettled(visible.length, ANNOUNCE_DELAY_MS);
+  // Nothing is announced until the list has loaded: the count starts at 0, and "0 customers shown" is false.
+  const shown = useSettled(customers ? visible.length : null, ANNOUNCE_DELAY_MS);
 
   const toggleSort = (key: SortKey) =>
     setSort((current) => ({ key, direction: current.key === key && current.direction === "asc" ? "desc" : "asc" }));
@@ -160,7 +182,7 @@ export function CustomersView() {
           </div>
 
           <div className="sr-only" role="status">
-            {customers ? `${shown} ${shown === 1 ? "customer" : "customers"} shown` : ""}
+            {customers && shown !== null ? `${shown} ${shown === 1 ? "customer" : "customers"} shown, sorted by ${SORT_LABELS[sort.key]}, ${sort.direction === "asc" ? "ascending" : "descending"}` : ""}
           </div>
 
           {empty ? (

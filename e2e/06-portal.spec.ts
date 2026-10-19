@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { randomBytes } from "node:crypto";
-import { ADMIN, EMPLOYEE, alertWith, drawer, newSession, openCustomer, requireCredentials, signIn } from "./helpers";
+import { businessDaysAgo, ADMIN, EMPLOYEE, alertWith, drawer, newSession, openCustomer, requireCredentials, signIn } from "./helpers";
 
 const ORIGIN = process.env.E2E_ORIGIN ?? "http://127.0.0.1:3201";
 const NAME = "E2E Portal Co";
@@ -21,11 +21,7 @@ let customerId = "";
 let otherId = "";
 let inviteLink = "";
 
-function daysAgo(days: number): string {
-  const date = new Date();
-  date.setDate(date.getDate() - days);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
-}
+const daysAgo = businessDaysAgo;
 
 async function post(page: Page, path: string, data: object): Promise<{ status: number; body: { data?: Record<string, unknown>; error?: { message: string } } }> {
   const response = await page.request.post(path, { headers: { Origin: ORIGIN }, data });

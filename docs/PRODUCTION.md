@@ -49,31 +49,23 @@ ALTER ROLE credit_app SET search_path = credit;
 
 **Step C, AFTER the migration** (as `credit_owner` or an administrator). Granting on tables that do not exist yet silently
 does nothing, so this must come after Step B, and be repeated after any migration that adds a table (the default privileges
-below cover that automatically):
+in the script cover that automatically). The statements live in ONE place, [`scripts/grants.sql`](../scripts/grants.sql), which CI
+applies to a throwaway server on every change:
 
-```sql
--- The app reads, adds, and updates. It never deletes, truncates or triggers.
-GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA credit TO credit_app;
--- Append-only: no updates to the audit log, and no access to the migration history.
-REVOKE UPDATE ON credit."AuditEvent" FROM credit_app;
--- Write-off allocations are append-only too (a trigger refuses changes anyway; this is the second lock).
-REVOKE UPDATE ON credit."WriteOffAllocation" FROM credit_app;
--- Only the owner (migrations, restore) runs the one-off allocation function; the running app never needs it.
-REVOKE EXECUTE ON FUNCTION credit.credit_backfill_write_off_allocations() FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION credit.credit_backfill_write_off_allocations() TO credit_owner;
-REVOKE ALL ON credit."_prisma_migrations" FROM credit_app;
--- Staff accounts: the running app only counts failures, ends sessions and records locks. It cannot change a role,
--- a password or whether an account is active (the account tool, run as credit_owner, does that).
-REVOKE INSERT, UPDATE ON credit."AppUser" FROM credit_app;
-GRANT UPDATE ("failedLogins", "lockedUntil", "sessionVersion", "updatedAt") ON credit."AppUser" TO credit_app;
--- Tables created by future migrations:
-ALTER DEFAULT PRIVILEGES FOR ROLE credit_owner IN SCHEMA credit GRANT SELECT, INSERT, UPDATE ON TABLES TO credit_app;
+```bash
+psql "<owner-url>" -v ON_ERROR_STOP=1 -f scripts/grants.sql
 ```
 
-(A future table's default `UPDATE` is wider than ideal; tighten it with a `REVOKE` as part of the migration that adds it, as
-for `AuditEvent` above.)
+What it does: the app reads, adds and updates, and never deletes, truncates or triggers; it cannot update the audit log or the
+write-off allocations, cannot see the migration history or the account-event log, cannot run the allocation backfill, and cannot
+insert or change staff accounts beyond counting failures and ending sessions. (A future table's default `UPDATE` is wider than
+ideal; tighten it with a `REVOKE` in `grants.sql` and in the migration that adds it, as for `AuditEvent`.)
 
-**Step D, check it** (connect as `credit_app`; each of these must behave as stated):
+**Optional, recommended: a lock timeout for the owner role.** Migrations take locks; one that waits forever behind a long
+transaction blocks every save behind it. `ALTER ROLE credit_owner SET lock_timeout = '10s';` makes a migration give up instead.
+
+**Step D, check it.** `APP_DATABASE_URL="<app-url>" node scripts/verify-grants.mjs` runs every line below as `credit_app` and fails
+if any behaves differently (CI runs it too). By hand, each of these must behave as stated:
 
 ```sql
 SELECT count(*) FROM "Customer";                       -- works
@@ -188,7 +180,7 @@ There are two kinds, and they hold different things.
 
   It writes `backups/credit-credit-<time>.json` (git-ignored). The `npm run backup` / `npm run restore` shortcuts are for
   the development schema only: they pin `credit_dev` and would silently back up the wrong data.
-- **JSON restore** goes into an EMPTY schema, as `credit_owner`:
+- **JSON restore** goes into an EMPTY schema (a scratch one first, to check; the live schema only in a real recovery), as `credit_owner`:
 
   ```bash
   NODE_ENV=production DATABASE_URL="<owner-url-for-the-scratch-schema>" npx tsx scripts/restore.ts <file>
@@ -273,8 +265,11 @@ did what. Decide and write down: how long closed accounts are kept, who may see 
 
 - Ledger and audit rows are append-only by design (that is what makes the history trustworthy), so a request to erase a person
   cannot be met by deleting rows. The workable answer is to **deactivate** a customer contact (turn their access off) and, for a
-  genuine erasure request, have the owner role replace the contact's name and email with a placeholder. Decide that procedure
-  with whoever handles such requests before the first one arrives.
+  genuine erasure request, run `NODE_ENV=production DATABASE_URL=<owner-url> npx tsx scripts/users.ts erase-contact <email>`
+  as `credit_owner`: it replaces that contact's name and email with a placeholder on the contact and in every audit row, ends their
+  sessions, and records what was done in `AccountEvent`. It does not (and cannot) reach **backups taken before it ran**: they still hold the old
+  details until they expire under the retention in section 5, so say that to the person who asked and keep the retention short.
+  Decide who may authorise an erasure before the first request arrives.
 - Reads of customer data are not audited, but CSV exports are logged (`export.downloaded`). Add view logging if you need to
   answer "who looked at this customer".
 - Backups contain the same data (section 5): the same retention and access rules apply to them.
@@ -310,3 +305,19 @@ did what. Decide and write down: how long closed accounts are kept, who may see 
   every charge), it stays unallocated: the app counts it as an ordinary credit, so no balance changes, and correcting a charge
   while one exists must leave today's balance at or above zero. The migration's notices list any such write-off.
   `SELECT credit_backfill_write_off_allocations();` runs the allocation again (it only touches write-offs with none).
+- **Staff and administrators sign in with a password only.** There is no second factor. Administrators can write off debt and
+  reverse entries, so this is the largest remaining account risk. It is a business decision rather than a code one, because the
+  choices differ in what they ask of people: an authenticator app (TOTP) for ADMIN and above; or restricting the whole staff
+  sign-in to the office network (an allowlist at the proxy); or single sign-on through whatever the company already uses.
+  Until one is chosen, rely on the long-password rule, the sign-in waits, the `auth.many_failed_logins` alert, and keeping the
+  number of ADMIN/SUPERADMIN accounts small.
+- **The customer list is cached for up to 10 seconds per server process.** Every write on that process clears it at once, so the
+  person who saved sees their change immediately. With several instances, another instance can show a list up to 10 seconds old
+  (the open tabs refresh every 30 seconds anyway). Every answer carries an `ETag`, so a tab whose list has not changed
+  receives "304 not modified" and no body. The list is still computed in memory and a cache miss costs the whole computation:
+  beyond roughly 5,000 customers move the balance and aging sums into SQL (`GROUP BY` customer) and page the list on the server.
+- **Password hashing takes about 0.6 s and at most 2 run at a time, with 8 waiting;** an eleventh sign-in at the same instant is
+  refused ("busy") instead of stalling everyone. That is generous for a few dozen people. If invitations go to hundreds of
+  customers at once and they all accept within a minute, expect some to see "busy" and retry.
+- **A scheduled restore drill for production is still manual** (section 5). CI proves the code path on every change; only a person
+  can prove the real backups restore.

@@ -21,6 +21,9 @@ export function useCustomers({ poll = true }: { poll?: boolean } = {}) {
     queryKey: ["customers"],
     queryFn: () => apiFetch<CustomerListDto>("/api/customers"),
     refetchInterval: poll ? REFRESH_MS : false,
+    // The poll IS the retry: a second attempt straight after a slow or failed one doubles the load on a server that is struggling
+    // (and the abandoned first request still runs to the end there).
+    retry: poll ? false : 1,
     // A failed refresh keeps showing the last good data (with a notice) instead of blanking the screen.
     placeholderData: keepPreviousData,
   });
@@ -139,7 +142,11 @@ export function usePortalContacts(customerId: string) {
 
 function useRefreshContacts(customerId: string) {
   const client = useQueryClient();
-  return () => Promise.all([client.invalidateQueries({ queryKey: ["portal-contacts", customerId] }), client.invalidateQueries({ queryKey: ["customer", customerId] })]);
+  // In the background, like useRefreshAll: returning the promise kept "Creating…" on screen for the refetch after the link already
+  // existed, and a person who closed the drawer in that moment lost a link that is shown only once.
+  return () => {
+    void Promise.all([client.invalidateQueries({ queryKey: ["portal-contacts", customerId] }), client.invalidateQueries({ queryKey: ["customer", customerId] })]);
+  };
 }
 
 export function useInviteContact(customerId: string) {

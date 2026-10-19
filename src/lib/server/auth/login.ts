@@ -13,7 +13,7 @@ import { afterSuccess, createFailureWatch, isLocked } from "./lockout";
 const failureWatch = createFailureWatch();
 
 /** At most this many password checks at once, and a few waiting. See hash-slots.ts for why. */
-const hashSlots = createHashSlots({ slots: 4, maxQueue: 24 });
+const hashSlots = createHashSlots({ slots: 2, maxQueue: 8 });
 
 let dummyHash: Promise<string> | undefined;
 
@@ -24,7 +24,11 @@ export async function prepareLoginTiming(): Promise<void> {
 
 /** A real hash to compare against when there is nobody to check, so a miss takes as long as a wrong password. */
 function missingUserHash(): Promise<string> {
-  dummyHash ??= bcrypt.hash("no-such-user-placeholder", BCRYPT_COST);
+  dummyHash ??= bcrypt.hash("no-such-user-placeholder", BCRYPT_COST).catch((error: unknown) => {
+    // A failed hash must not be remembered: every sign-in for an unknown name would fail until the next restart.
+    dummyHash = undefined;
+    throw error;
+  });
   return dummyHash;
 }
 

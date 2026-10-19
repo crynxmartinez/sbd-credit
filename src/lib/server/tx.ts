@@ -3,6 +3,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "./db";
 import { classifyDbError } from "./db-errors";
 import { ApiError } from "./http";
+import { customerListCache } from "./list-cache";
 import { log } from "./log";
 
 /**
@@ -24,11 +25,16 @@ export const interruptedError = () =>
   new ApiError(503, "interrupted", "The connection to the database was interrupted. This may or may not have been saved: check the customer's record before entering it again.");
 export async function transaction<T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {
   try {
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT set_config('lock_timeout', ${LOCK_TIMEOUT}, true), set_config('statement_timeout', ${STATEMENT_TIMEOUT}, true)`;
       return work(tx);
     }, TRANSACTION_OPTIONS);
+    // Committed: the cached customer list no longer matches the books.
+    customerListCache.bump();
+    return result;
   } catch (error) {
+    // Even a failure may have changed something (a commit whose answer was lost): never serve a list computed before it.
+    customerListCache.bump();
     const outcome = classifyDbError(error);
     // Without this the operator sees nothing: the person is told "busy" and the log stays quiet.
     if (outcome !== "other") log("warn", "tx.connection_problem", { outcome, error });

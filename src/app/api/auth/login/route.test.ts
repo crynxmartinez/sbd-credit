@@ -153,3 +153,40 @@ describe("what sign-in records", () => {
     expect(authenticateAny).not.toHaveBeenCalled();
   });
 });
+
+describe("a failure that is not a wrong password", () => {
+  test("is not counted against the person: a database error does not build up a wait", async () => {
+    authenticateAny.mockImplementation(async () => {
+      throw new Error("database is down");
+    });
+    for (let i = 0; i < 6; i += 1) expect((await attempt(POST, "dana7@example.com", "203.0.113.35")).status).toBe(500);
+    authenticateAny.mockResolvedValueOnce({ kind: "staff", user: { id: "s7", name: "Dana" } });
+    expect((await attempt(POST, "dana7@example.com", "203.0.113.35")).status).toBe(200); // never made to wait
+  });
+});
+
+describe("a proxy that sends no client address", () => {
+  test("in production it is reported (once a minute, not per request), because every visitor then shares one limit", async () => {
+    vi.resetModules();
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
+    try {
+      const fresh = (await import("./route")) as { POST: (request: NextRequest) => Promise<Response> };
+      authenticateAny.mockResolvedValue({ kind: "staff", user: { id: "s9", name: "Dana" } });
+      const withoutAddress = () =>
+        fresh.POST(
+          new NextRequest("http://app.example/api/auth/login", {
+            method: "POST",
+            headers: { "content-type": "application/json", origin: "http://app.example", host: "app.example" },
+            body: JSON.stringify({ username: "dana9@example.com", password: "whatever-password-1" }),
+          }),
+        );
+      await withoutAddress();
+      await withoutAddress();
+      expect(logged.filter((entry) => entry.event === "auth.no_client_address")).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+});

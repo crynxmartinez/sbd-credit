@@ -8,6 +8,7 @@ import { createCustomer, decide, getDetail, listSummaries, updateCustomer } from
 import { addDays } from "@/lib/domain/dates";
 import { businessToday } from "../as-of";
 import { recordEntry, reverseEntry, voidEntry } from "./ledger";
+import { DB_REFUSAL } from "./db-refusal";
 
 const ADMIN: SessionUser = { id: "u-admin", username: "admin", name: "Test Admin", role: "ADMIN" };
 const EMPLOYEE: SessionUser = { id: "u-emp", username: "emp", name: "Test Employee", role: "EMPLOYEE" };
@@ -217,7 +218,7 @@ describe("the database itself refuses to break the ledger", () => {
     const id = await approvedCustomer("Unique Key Co");
     const base = { customerId: id, type: "CHARGE", amountCents: 5, entryDate: new Date("2026-10-13T00:00:00Z"), createdBy: "raw", requestKey: "same-key" };
     await prisma.ledgerEntry.create({ data: base });
-    await expect(prisma.ledgerEntry.create({ data: base })).rejects.toThrow();
+    await expect(prisma.ledgerEntry.create({ data: base })).rejects.toThrow(DB_REFUSAL);
   });
 
   test("a void is the one allowed change, and it cannot be undone", async () => {
@@ -225,20 +226,20 @@ describe("the database itself refuses to break the ledger", () => {
     const { id: entryId } = await recordEntry(id, entry("CHARGE", 100_00), EMPLOYEE);
     await voidEntry(id, entryId, "Entered twice", ADMIN);
 
-    await expect(prisma.ledgerEntry.update({ where: { id: entryId }, data: { voidedAt: null, voidedBy: null, voidReason: null } })).rejects.toThrow();
+    await expect(prisma.ledgerEntry.update({ where: { id: entryId }, data: { voidedAt: null, voidedBy: null, voidReason: null } })).rejects.toThrow(DB_REFUSAL);
   });
 
   test("bad data is refused whatever wrote it", async () => {
     const id = await approvedCustomer("Constraint Co");
     const base = { customerId: id, entryDate: new Date("2026-10-13T00:00:00Z"), createdBy: "raw" };
 
-    await expect(prisma.ledgerEntry.create({ data: { ...base, type: "PAYMENT", amountCents: -5 } })).rejects.toThrow();
-    await expect(prisma.ledgerEntry.create({ data: { ...base, type: "CHARGE", amountCents: 0 } })).rejects.toThrow();
-    await expect(prisma.ledgerEntry.create({ data: { ...base, type: "REFUND", amountCents: 5 } })).rejects.toThrow();
-    await expect(prisma.ledgerEntry.create({ data: { ...base, type: "ADJUSTMENT", amountCents: 0 } })).rejects.toThrow();
+    await expect(prisma.ledgerEntry.create({ data: { ...base, type: "PAYMENT", amountCents: -5 } })).rejects.toThrow(DB_REFUSAL);
+    await expect(prisma.ledgerEntry.create({ data: { ...base, type: "CHARGE", amountCents: 0 } })).rejects.toThrow(DB_REFUSAL);
+    await expect(prisma.ledgerEntry.create({ data: { ...base, type: "REFUND", amountCents: 5 } })).rejects.toThrow(DB_REFUSAL);
+    await expect(prisma.ledgerEntry.create({ data: { ...base, type: "ADJUSTMENT", amountCents: 0 } })).rejects.toThrow(DB_REFUSAL);
     await expect(prisma.ledgerEntry.create({ data: { ...base, type: "CHARGE", amountCents: 5, voidedAt: new Date() } })).rejects.toThrow(/LedgerEntry_void_check/);
-    await expect(prisma.customer.update({ where: { id }, data: { status: "bogus" } })).rejects.toThrow();
-    await expect(prisma.customer.update({ where: { id }, data: { creditLimitCents: -1 } })).rejects.toThrow();
+    await expect(prisma.customer.update({ where: { id }, data: { status: "bogus" } })).rejects.toThrow(DB_REFUSAL);
+    await expect(prisma.customer.update({ where: { id }, data: { creditLimitCents: -1 } })).rejects.toThrow(DB_REFUSAL);
   });
 });
 
@@ -726,22 +727,22 @@ describe("the database itself protects write-offs and reversals", () => {
   test("a write-off or reversal without a reason is refused", async () => {
     const id = await approvedCustomer("Raw Reason Co");
     const { id: chargeId } = await recordEntry(id, entry("CHARGE", 10_00), EMPLOYEE);
-    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "WRITE_OFF", amountCents: 5_00 } })).rejects.toThrow();
-    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "WRITE_OFF", amountCents: 5_00, note: "  " } })).rejects.toThrow();
+    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "WRITE_OFF", amountCents: 5_00 } })).rejects.toThrow(DB_REFUSAL);
+    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "WRITE_OFF", amountCents: 5_00, note: "  " } })).rejects.toThrow(DB_REFUSAL);
     await expect(
       prisma.ledgerEntry.create({ data: { ...base(id), type: "REVERSAL", amountCents: -10_00, reversesEntryId: chargeId } }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(DB_REFUSAL);
   });
 
   test("only a reversal may name an entry it reverses, and a write-off must be positive", async () => {
     const id = await approvedCustomer("Raw Shape Co");
     const { id: chargeId } = await recordEntry(id, entry("CHARGE", 10_00), EMPLOYEE);
-    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "REVERSAL", amountCents: -10_00, note: "Because" } })).rejects.toThrow();
+    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "REVERSAL", amountCents: -10_00, note: "Because" } })).rejects.toThrow(DB_REFUSAL);
     await expect(
       prisma.ledgerEntry.create({ data: { ...base(id), type: "CHARGE", amountCents: 5, reversesEntryId: chargeId } }),
-    ).rejects.toThrow();
-    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "WRITE_OFF", amountCents: -5_00, note: "Because" } })).rejects.toThrow();
-    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "REVERSAL", amountCents: 0, note: "Because", reversesEntryId: chargeId } })).rejects.toThrow();
+    ).rejects.toThrow(DB_REFUSAL);
+    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "WRITE_OFF", amountCents: -5_00, note: "Because" } })).rejects.toThrow(DB_REFUSAL);
+    await expect(prisma.ledgerEntry.create({ data: { ...base(id), type: "REVERSAL", amountCents: 0, note: "Because", reversesEntryId: chargeId } })).rejects.toThrow(DB_REFUSAL);
   });
 
   test("an entry cannot be reversed twice, and what a reversal points at cannot be changed", async () => {
@@ -752,7 +753,7 @@ describe("the database itself protects write-offs and reversals", () => {
 
     await expect(
       prisma.ledgerEntry.create({ data: { ...base(id), type: "REVERSAL", amountCents: -10_00, note: "Again", reversesEntryId: chargeId } }),
-    ).rejects.toThrow();
-    await expect(prisma.ledgerEntry.update({ where: { id: reversalId }, data: { reversesEntryId: other } })).rejects.toThrow();
+    ).rejects.toThrow(DB_REFUSAL);
+    await expect(prisma.ledgerEntry.update({ where: { id: reversalId }, data: { reversesEntryId: other } })).rejects.toThrow(DB_REFUSAL);
   });
 });

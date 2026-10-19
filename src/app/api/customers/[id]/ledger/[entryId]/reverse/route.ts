@@ -13,5 +13,5 @@ export function POST(request: NextRequest, { params }: Context) {
     const { id, entryId } = await params;
     const result = await reverseEntry(id, entryId, await readJson(request, reversalSchema), user);
     return ok(result, 201);
-  });
+  }, { request });
 }

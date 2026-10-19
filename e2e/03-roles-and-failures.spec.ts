@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { ADMIN, EMPLOYEE, alertWith, drawer, newSession, openCustomer, requireCredentials, signIn, statusWith } from "./helpers";
+import { businessDaysAgo, ADMIN, EMPLOYEE, alertWith, drawer, newSession, openCustomer, requireCredentials, signIn, statusWith } from "./helpers";
 
 const ORIGIN = process.env.E2E_ORIGIN ?? "http://127.0.0.1:3201";
 
@@ -36,9 +36,11 @@ test.describe("what an employee can and cannot do", () => {
 
     const adjustment = await page.request.post(`/api/customers/${customer.id}/ledger`, {
       headers: { Origin: ORIGIN },
-      data: { type: "ADJUSTMENT", amountCents: 100, entryDate: "2026-10-14" },
+      data: { type: "ADJUSTMENT", amountCents: 100, entryDate: businessDaysAgo(0) },
     });
+    // Refused for the right reason: the role, not (say) a date in a closed month, which also answers 403.
     expect(adjustment.status()).toBe(403);
+    expect((await adjustment.json()).error.code).toBe("forbidden");
     await context.close();
   });
 
@@ -72,16 +74,22 @@ test.describe("when things go wrong, the screen says so", () => {
 
   test("a failed refresh keeps the last good data and says how old it is", async ({ browser }) => {
     const { context, page } = await newSession(browser, ADMIN);
+    // A fake clock, so the 30-second background refresh can be made to happen now instead of waiting for it.
+    await page.clock.install();
     await page.goto("/customers");
     await expect(page.getByRole("button", { name: "Midwest Fabrication LLC", exact: true })).toBeVisible();
 
-    await page.route("**/api/customers", (route) => route.abort("failed"));
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
-    // Force a refetch the way a returning-to-the-tab does.
-    await page.getByRole("link", { name: "Dashboard" }).first().click();
-    await page.getByRole("link", { name: "Customers" }).first().click();
+    let refused = 0;
+    await page.route("**/api/customers", (route) => {
+      refused += 1;
+      return route.abort("failed");
+    });
+    // The background refresh comes due (every 30 s) and the server cannot be reached.
+    await page.clock.fastForward(31_000);
 
+    // The refresh really failed, the person is TOLD so (with how old what they see is), and the last good data is still there.
+    await expect.poll(() => refused).toBeGreaterThan(0);
+    await expect(alertWith(page, /Couldn.t refresh customers\. Showing what was loaded at/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Midwest Fabrication LLC", exact: true })).toBeVisible();
     await context.close();
   });

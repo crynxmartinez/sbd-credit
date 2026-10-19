@@ -38,14 +38,24 @@ function fieldsFrom(error: ZodError): Record<string, string> {
   return fields;
 }
 
+/** Method and path of the request (never its query, body or headers), so a burst of refusals can be tied to where it came from. */
+function requestContext(request: Request | undefined): { method?: string; path?: string } {
+  if (!request) return {};
+  try {
+    return { method: request.method, path: new URL(request.url).pathname };
+  } catch {
+    return { method: request.method };
+  }
+}
+
 /** Wraps a handler so every failure leaves as the same JSON shape and nothing internal leaks. */
-export async function route(handler: () => Promise<Response>): Promise<Response> {
+export async function route(handler: () => Promise<Response>, context: { request?: Request } = {}): Promise<Response> {
   try {
     return await handler();
   } catch (error) {
     if (error instanceof ApiError) {
       // Refusals an operator needs to be able to see: a blocked origin (a proxy misconfiguration), a rate limit, a busy system.
-      if (error.status === 403 || error.status === 429 || error.status === 503) log("warn", "api.refused", { status: error.status, code: error.code });
+      if (error.status === 403 || error.status === 429 || error.status === 503) log("warn", "api.refused", { status: error.status, code: error.code, ...requestContext(context.request) });
       return failure(error.status, error.code, error.message, error.fields);
     }
     if (error instanceof ZodError) return failure(400, "invalid_input", "Some fields need attention.", fieldsFrom(error));

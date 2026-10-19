@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { newRequestKey } from "@/lib/client/request-key";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { ApiClientError } from "@/lib/client/api";
 import { chargeLabel, recordsFromDto } from "@/lib/client/ledger-records";
 import { useBusinessToday, useRecordEntry } from "@/lib/client/queries";
@@ -58,7 +59,7 @@ export function EntryForm({ customerId, kind, paymentTerms, owedCents, ledger, a
   const [picked, setPicked] = useState<Record<string, string>>({});
   const [reviewedCover, setReviewedCover] = useState<Allocation[]>([]);
   // One key per form. A retry after a lost reply carries the same key, so it cannot record a second payment.
-  const [requestKey] = useState(() => crypto.randomUUID());
+  const [requestKey] = useState(() => newRequestKey());
   const id = `entry-${kind}`;
   const records = useMemo(() => recordsFromDto(ledger), [ledger]);
   const entryById = useMemo(() => new Map(ledger.map((entry) => [entry.id, entry])), [ledger]);
@@ -66,6 +67,10 @@ export function EntryForm({ customerId, kind, paymentTerms, owedCents, ledger, a
   const targets = useMemo(() => (kind === "writeoff" ? writeOffTargets(records, entryDate, today) : []), [kind, records, entryDate, today]);
   const writableCents = targets.reduce((sum, target) => sum + target.openCents, 0);
   const formRef = useAutoFocus<HTMLFormElement>();
+  const reviewRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (reviewing) reviewRef.current?.focus();
+  }, [reviewing]);
 
   // Any change to what was typed cancels the review, so the summary can never describe something other than what is sent.
   const edit = <T,>(setter: (value: T) => void) => (value: T) => {
@@ -142,7 +147,7 @@ export function EntryForm({ customerId, kind, paymentTerms, owedCents, ledger, a
   return (
     <form ref={formRef} className="inline-form" style={{ marginTop: 10 }} onSubmit={submit} noValidate aria-label={TITLE[kind]}>
       {error ? (
-        <div className="form-error" role="alert" style={{ marginBottom: 0 }}>
+        <div className="form-error" role="alert" id={`${id}-error`} style={{ marginBottom: 0 }}>
           {error}
         </div>
       ) : null}
@@ -171,7 +176,8 @@ export function EntryForm({ customerId, kind, paymentTerms, owedCents, ledger, a
             value={amount}
             onChange={(e) => edit(setAmount)(e.target.value)}
             data-autofocus
-            aria-describedby={kind === "writeoff" ? `${id}-owed` : undefined}
+            aria-invalid={error ? true : undefined}
+            aria-describedby={[kind === "writeoff" ? `${id}-owed` : null, error ? `${id}-error` : null].filter(Boolean).join(" ") || undefined}
           />
           {kind === "writeoff" ? (
             <span className="field-hint" id={`${id}-owed`}>
@@ -276,7 +282,9 @@ export function EntryForm({ customerId, kind, paymentTerms, owedCents, ledger, a
       </div>
 
       {reviewing && cents !== null ? (
-        <div className="warn-note" role="status">
+        // Focus moves here when the review appears: the confirmation step of a financial action must be read out, and a status
+        // region inserted with its text already in it is not announced by every screen reader.
+        <div className="warn-note" role="group" aria-label="Review this write-off" tabIndex={-1} ref={reviewRef}>
           This gives up on {formatCents(cents, { fixed: true })} of the {formatCents(owedCents, { fixed: true })} owed. The balance becomes{" "}
           <b>{formatCents(owedCents - cents, { fixed: true })}</b>, and it stops showing as past due. It can be undone only by reversing the write-off.
           <ul className="pick-list" aria-label="Charges this covers">

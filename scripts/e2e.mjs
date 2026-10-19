@@ -14,6 +14,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { openSync } from "node:fs";
+import { waitPastMidnightIfNear } from "./lib/midnight-guard.mjs";
 
 const PORT = Number(process.env.E2E_PORT ?? 3201);
 const SCHEMA = "credit_test_e2e";
@@ -49,6 +50,7 @@ function step(label, command, extraEnv = {}) {
   }
 }
 
+await waitPastMidnightIfNear("e2e");
 step("reset the schema", "node scripts/dev-db.mjs reset");
 step("apply migrations", "node scripts/with-dev-db.mjs prisma migrate deploy");
 step("create the e2e admin", 'node scripts/with-dev-db.mjs tsx scripts/users.ts create e2e.admin "E2E Admin" SUPERADMIN', { NEW_USER_PASSWORD: adminPassword });

@@ -10,6 +10,9 @@ import "./app.css";
 export default function GlobalError({ error, retry }: { error: Error & { digest?: string }; retry: () => void }) {
   return (
     <html lang="en">
+      <head>
+        <title>Something went wrong — Steel Building Depot</title>
+      </head>
       <body>
         <main className="login-wrap">
           <div className="login-card" role="alert">

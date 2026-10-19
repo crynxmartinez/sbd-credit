@@ -1,5 +1,6 @@
 "use client";
 
+import { newRequestKey } from "@/lib/client/request-key";
 import { useState, type FormEvent } from "react";
 import { ApiClientError } from "@/lib/client/api";
 import { useBusinessToday, useReverseEntry, useVoidEntry } from "@/lib/client/queries";
@@ -37,7 +38,7 @@ function ReasonForm(props: ReasonFormProps) {
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const [requestKey] = useState(() => crypto.randomUUID());
+  const [requestKey] = useState(() => newRequestKey());
   const formRef = useAutoFocus<HTMLFormElement>();
   const inputId = `${props.formName.toLowerCase().replace(/\W+/g, "-")}-${props.entryId}`;
 

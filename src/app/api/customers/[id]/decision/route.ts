@@ -14,5 +14,5 @@ export function POST(request: NextRequest, { params }: Context) {
     const { id } = await params;
     await decide(id, await readJson(request, decisionSchema), user);
     return ok({ decided: true });
-  });
+  }, { request });
 }

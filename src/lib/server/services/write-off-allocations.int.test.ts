@@ -10,6 +10,7 @@ import { businessToday } from "../as-of";
 import { createCustomer, decide, getDetail } from "./customers";
 import { ledgerCsv } from "./exports";
 import { recordEntry, reverseEntry, voidEntry } from "./ledger";
+import { DB_REFUSAL } from "./db-refusal";
 
 /**
  * A write-off names the charges it covers. These tests run against the real database: the rules the service enforces, the
@@ -200,9 +201,9 @@ describe("the database refuses what the rules forbid, whatever the application d
   test("allocations are append-only: no update, no delete", async () => {
     const { writeOffId } = await chargeAndWriteOff("Append Only Co");
     const row = await prisma.writeOffAllocation.findFirstOrThrow({ where: { writeOffEntryId: writeOffId } });
-    await expect(prisma.writeOffAllocation.update({ where: { id: row.id }, data: { amountCents: 1 } })).rejects.toThrow();
-    await expect(prisma.writeOffAllocation.delete({ where: { id: row.id } })).rejects.toThrow();
-    await expect(prisma.$executeRaw`TRUNCATE "WriteOffAllocation"`).rejects.toThrow();
+    await expect(prisma.writeOffAllocation.update({ where: { id: row.id }, data: { amountCents: 1 } })).rejects.toThrow(DB_REFUSAL);
+    await expect(prisma.writeOffAllocation.delete({ where: { id: row.id } })).rejects.toThrow(DB_REFUSAL);
+    await expect(prisma.$executeRaw`TRUNCATE "WriteOffAllocation"`).rejects.toThrow(DB_REFUSAL);
   });
 
   test("an allocation must point at a write-off and a charge of the same customer, and never add up to more than the write-off", async () => {
@@ -219,7 +220,7 @@ describe("the database refuses what the rules forbid, whatever the application d
     const another = await charge(one.id, 100_00, "INV-MORE");
     await expect(prisma.writeOffAllocation.create({ data: { writeOffEntryId: one.writeOffId, chargeEntryId: another.id, amountCents: 1 } })).rejects.toThrow(/more than the write-off/);
     // an amount that is not positive
-    await expect(prisma.writeOffAllocation.create({ data: { writeOffEntryId: one.writeOffId, chargeEntryId: another.id, amountCents: 0 } })).rejects.toThrow();
+    await expect(prisma.writeOffAllocation.create({ data: { writeOffEntryId: one.writeOffId, chargeEntryId: another.id, amountCents: 0 } })).rejects.toThrow(DB_REFUSAL);
   });
 
   test("a charge dated after the write-off cannot be covered by it", async () => {
@@ -242,7 +243,7 @@ describe("the database refuses what the rules forbid, whatever the application d
 
   test("the flag is frozen: it cannot be switched off afterwards", async () => {
     const { writeOffId } = await chargeAndWriteOff("Frozen Flag Co");
-    await expect(prisma.ledgerEntry.update({ where: { id: writeOffId }, data: { allocationsRequired: false } })).rejects.toThrow();
+    await expect(prisma.ledgerEntry.update({ where: { id: writeOffId }, data: { allocationsRequired: false } })).rejects.toThrow(DB_REFUSAL);
   });
 });
 

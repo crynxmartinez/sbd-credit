@@ -326,12 +326,12 @@ tbody tr:hover td, tbody tr:hover th.row-head { background: var(--surface-2); }
 .empty-state {
   text-align: center; padding: 60px 20px; color: var(--text-dim);
 }
-.empty-state h3 { margin: 14px 0 6px 0; font-size: 17px; color: var(--text); }
+.empty-state h2, .empty-state h3 { margin: 14px 0 6px 0; font-size: 17px; color: var(--text); }
 .empty-state p { font-size: 13.5px; max-width: 360px; margin: 0 auto; }
 
 /* ---------- Modal ---------- */
 .overlay {
-  position: fixed; inset: 0; background: rgba(15,20,28,0.5);
+  position: fixed; inset: var(--banner-h, 0px) 0 0 0; background: rgba(15,20,28,0.5);
   display: flex; align-items: flex-start; justify-content: center;
   padding: 40px 16px; padding-top: calc(40px + env(safe-area-inset-top, 0px));
   z-index: 100; overflow-y: auto;
@@ -378,7 +378,7 @@ tbody tr:hover td, tbody tr:hover th.row-head { background: var(--surface-2); }
 
 /* ---------- Detail drawer ---------- */
 .drawer-overlay {
-  position: fixed; inset: 0; background: rgba(15,20,28,0.5); z-index: 100;
+  position: fixed; inset: var(--banner-h, 0px) 0 0 0; background: rgba(15,20,28,0.5); z-index: 100;
   display: flex; justify-content: flex-end;
 }
 .drawer {

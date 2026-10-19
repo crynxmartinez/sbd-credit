@@ -1,3 +1,4 @@
+import { compareText } from "./dates";
 import type { CustomerStatus, LedgerType } from "./constants";
 import type { CustomerSummary } from "../types";
 import { effectOnBalance } from "./ledger";
@@ -86,7 +87,7 @@ function toEntry(entry: PortalSourceEntry): PortalEntry {
 
 /** Newest first; ties broken by the entry's id (not sent to the customer) so the order never reshuffles between loads. */
 function newestFirst(a: PortalSourceEntry, b: PortalSourceEntry): number {
-  return b.entryDate.localeCompare(a.entryDate) || b.id.localeCompare(a.id);
+  return compareText(b.entryDate, a.entryDate) || compareText(b.id, a.id);
 }
 
 export function toPortalView(customer: CustomerSummary, ledger: readonly PortalSourceEntry[], asOf: string): PortalView {

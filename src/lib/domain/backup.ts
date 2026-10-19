@@ -5,6 +5,8 @@
  * Doing that by named column (not "anything that looks like a date") means free text such as a note or a business
  * name can never be mistaken for one.
  */
+import { PAYMENT_TERMS } from "./constants";
+
 export const BACKUP_FORMAT = 1;
 
 const DATE_FIELDS = {
@@ -27,7 +29,7 @@ export interface BackupFile {
   format: number;
   schema: string;
   takenAt: string;
-  counts: { customers: number; ledger: number; audit: number; portalContacts: number; writeOffAllocations?: number };
+  counts: { customers: number; ledger: number; audit: number; portalContacts: number; writeOffAllocations?: number; users?: number };
   customers: Row[];
   ledger: Row[];
   audit: Row[];
@@ -67,12 +69,14 @@ function reviveDates(rows: Row[], fields: readonly string[], table: string): Row
  * The session version a restored account gets. A cookie is valid only while the account's version equals the one in it, and
  * every sign-out adds one, so "one more than the backed-up version" may be a number a cookie ALREADY carries (the backup was
  * taken at 5, someone signed out and in again at 6, and the restored account would be at 6). A version drawn from the clock
- * is higher than any the account could have reached since, so no earlier cookie can match. (Seconds since 1970 fit the
- * column until 2038.)
+ * is higher than any the account could have reached since, so no earlier cookie can match. It counts seconds from the start of
+ * 2026, not from 1970: the column is a 32-bit integer, which holds seconds-since-1970 only until January 2038 and these until 2094.
  */
+export const SESSION_EPOCH_SECONDS = 1_767_225_600; // 2026-01-01T00:00:00Z
+
 export function sessionVersionAfterRestore(previous: unknown, nowMs: number): number {
   const base = typeof previous === "number" && Number.isInteger(previous) ? previous : 1;
-  return Math.max(base + 1, Math.floor(nowMs / 1000));
+  return Math.max(base + 1, Math.floor(nowMs / 1000) - SESSION_EPOCH_SECONDS);
 }
 
 /**
@@ -140,8 +144,23 @@ export function reviveBackup(raw: unknown, nowMs: number = Date.now()): BackupFi
     throw new Error(`The backup is incomplete: it says ${String(counts?.portalContacts)} portalContacts rows but contains ${actual.portalContacts}.`);
   }
 
+  // Accounts are counted too, by files written since that was added: a missing or cut-short section is then caught, instead of
+  // restoring fewer sign-ins and still exiting cleanly. (An older file has no such count and is not held to one.)
+  if (counts?.users !== undefined) {
+    const present = Array.isArray(file.users) ? file.users.length : 0;
+    if (counts.users !== present) throw new Error(`The backup is incomplete: it says ${String(counts.users)} users but contains ${present}.`);
+  }
+
   if (file.writeOffAllocations !== undefined && counts?.writeOffAllocations !== rawAllocations.length) {
     throw new Error(`The backup is incomplete: it says ${String(counts?.writeOffAllocations)} writeOffAllocations rows but contains ${rawAllocations.length}.`);
+  }
+
+  for (const [index, row] of file.customers.entries()) {
+    // Not reachable through the app (the form offers a fixed list), so only a damaged or hand-edited file gets here: refuse it, rather
+    // than let an unknown value quietly turn every due date into Net 30.
+    if (row.paymentTerms !== undefined && !(PAYMENT_TERMS as readonly unknown[]).includes(row.paymentTerms)) {
+      throw new Error(`customers[${index}].paymentTerms is not a known payment term: ${String(row.paymentTerms)}`);
+    }
   }
 
   const customerIds = new Set(file.customers.map((row) => row.id));
@@ -169,7 +188,10 @@ export function reviveBackup(raw: unknown, nowMs: number = Date.now()): BackupFi
     format: BACKUP_FORMAT,
     schema: String(file.schema ?? ""),
     takenAt: String(file.takenAt ?? ""),
-    counts: file.writeOffAllocations === undefined ? actual : { ...actual, writeOffAllocations: rawAllocations.length },
+    counts: {
+      ...(file.writeOffAllocations === undefined ? actual : { ...actual, writeOffAllocations: rawAllocations.length }),
+      ...(counts?.users === undefined ? {} : { users: counts.users as number }),
+    },
     customers: reviveDates(file.customers, DATE_FIELDS.customers, "customers"),
     ledger: reviveDates(file.ledger, DATE_FIELDS.ledger, "ledger"),
     audit: reviveDates(file.audit, DATE_FIELDS.audit, "audit"),

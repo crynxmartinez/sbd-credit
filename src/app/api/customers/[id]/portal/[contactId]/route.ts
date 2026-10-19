@@ -16,5 +16,5 @@ export function PATCH(request: NextRequest, { params }: Context) {
     const { id, contactId } = await params;
     const { active } = await readJson(request, activeSchema);
     return ok(await setContactActive(id, contactId, active, user));
-  });
+  }, { request });
 }

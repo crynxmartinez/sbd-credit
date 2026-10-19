@@ -29,10 +29,26 @@ export function todayISO(now: Date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
+// One formatter per time zone: building an Intl.DateTimeFormat is slow, and this runs for every row of a long history.
+const zoneFormatters = new Map<string, Intl.DateTimeFormat>();
+
 /** The calendar day (YYYY-MM-DD) that a moment falls on in a given time zone. */
 export function dateInZone(moment: Date, timeZone: string): string {
-  // The en-CA locale prints dates as YYYY-MM-DD.
-  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(moment);
+  let formatter = zoneFormatters.get(timeZone);
+  if (!formatter) {
+    // The en-CA locale prints dates as YYYY-MM-DD.
+    formatter = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
+    zoneFormatters.set(timeZone, formatter);
+  }
+  return formatter.format(moment);
+}
+
+/**
+ * Plain character order. ISO dates and our ids are plain ASCII, where this is the same order as localeCompare, without building
+ * locale machinery on every comparison of a sort over thousands of rows.
+ */
+export function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 export function isValidISODate(value: string): boolean {

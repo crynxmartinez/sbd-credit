@@ -6,7 +6,8 @@
  * setting and would hand it to the next client, the live website included).
  */
 
-const DEV_SCHEMA_RULE = /^credit_(dev|test)[a-z0-9_]*$/;
+// credit_dev, credit_test, credit_test_<name>: the word after the underscore, never a look-alike such as credit_devious.
+const DEV_SCHEMA_RULE = /^credit_(dev|test)(_[a-z0-9]+)*$/;
 
 /** Throws unless `schema` is a development schema this project owns. Returns it unchanged. */
 export function assertDevSchema(schema) {
@@ -19,8 +20,15 @@ export function assertDevSchema(schema) {
 }
 
 /** Same address with the pooled prefix removed, so sessions end with the connection. */
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
 export function toDirectUrl(rawUrl) {
   const url = new URL(rawUrl);
+  // Credentials must not cross a network unencrypted: a remote server needs an sslmode that encrypts, in development too.
+  const wanted = url.searchParams.get("sslmode");
+  if (!LOCAL_HOSTS.has(url.hostname) && !["require", "prefer", "verify-ca", "verify-full"].includes(wanted ?? "")) {
+    throw new Error("Refusing: the database address for a remote server must include sslmode=require (or stronger).");
+  }
   url.hostname = url.hostname.replace(/^pooled[.]/i, "");
   // pg already verifies the certificate for these modes; say so explicitly so a future pg default cannot weaken it.
   const mode = url.searchParams.get("sslmode");

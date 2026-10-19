@@ -1,4 +1,5 @@
 import type { LedgerType } from "./constants";
+import { compareText } from "./dates";
 import { computeAging, type LedgerRecord, type OpenItem } from "./ledger";
 
 /**
@@ -85,7 +86,7 @@ export function sameAllocations(a: readonly Allocation[], b: readonly Allocation
 }
 
 const oldestFirst = (a: AllocationTarget, b: AllocationTarget): number =>
-  a.dueDate.localeCompare(b.dueDate) || a.entryDate.localeCompare(b.entryDate) || a.id.localeCompare(b.id);
+  compareText(a.dueDate, b.dueDate) || compareText(a.entryDate, b.entryDate) || compareText(a.id, b.id);
 
 /**
  * Splits a write-off across charges. By default the oldest-due charges are covered first (the same order payments settle
@@ -160,4 +161,22 @@ export function writeOffCover(entries: readonly LedgerRecord[], chargeId: string
     }
   }
   return { liveCents, ever };
+}
+
+/**
+ * `writeOffCover` for every entry at once: one pass over the ledger instead of one pass PER entry (which made opening a customer
+ * with thousands of entries quadratic). An entry nothing covers is simply absent.
+ */
+export function writeOffCoverMap(entries: readonly LedgerRecord[]): Map<string, { liveCents: number; ever: boolean }> {
+  const reversed = new Set(entries.filter((entry) => entry.type === "REVERSAL" && !entry.voided && entry.reverses).map((entry) => entry.reverses));
+  const cover = new Map<string, { liveCents: number; ever: boolean }>();
+  for (const writeOff of entries) {
+    if (writeOff.type !== "WRITE_OFF" || writeOff.voided) continue;
+    const live = !reversed.has(writeOff.id);
+    for (const allocation of writeOff.writeOffAllocations ?? []) {
+      const current = cover.get(allocation.chargeId) ?? { liveCents: 0, ever: false };
+      cover.set(allocation.chargeId, { liveCents: current.liveCents + (live ? allocation.amountCents : 0), ever: true });
+    }
+  }
+  return cover;
 }

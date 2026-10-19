@@ -133,7 +133,7 @@ export function DashboardView() {
             ) : null}
             {alerts.length > ALERTS_SHOWN ? (
               <button type="button" className="btn btn-sm" onClick={() => setShowAllAlerts((current) => !current)} aria-expanded={showAllAlerts}>
-                {showAllAlerts ? "Show fewer" : `Show all ${alerts.length}`}
+                Show all {alerts.length} alerts
               </button>
             ) : null}
           </div>

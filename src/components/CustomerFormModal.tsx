@@ -1,11 +1,13 @@
 "use client";
 
+import { newRequestKey } from "@/lib/client/request-key";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiClientError } from "@/lib/client/api";
 import { useBackGuard } from "@/lib/client/back-guard";
 import { useBusinessToday, useCreateCustomer, useCustomers, useUpdateCustomer } from "@/lib/client/queries";
 import { PAYMENT_TERMS } from "@/lib/domain/constants";
+import { hasCreditLine } from "@/lib/domain/status";
 import { centsToDecimal } from "@/lib/domain/csv";
 import { parseMoneyToCents } from "@/lib/domain/money";
 import { can } from "@/lib/domain/roles";
@@ -109,7 +111,7 @@ export function CustomerFormModal({ customer, onClose, onCreated }: Props) {
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   // One key per form: if a save is retried (a lost reply, a double click) the server recognises it and adds nothing twice.
-  const [requestKey] = useState(() => crypto.randomUUID());
+  const [requestKey] = useState(() => newRequestKey());
   const [stale, setStale] = useState(false);
   // Set only when the person chose "load theirs": the form then holds the newest copy, so it must be saved against it.
   const [loadedVersion, setLoadedVersion] = useState<number | null>(null);
@@ -121,7 +123,7 @@ export function CustomerFormModal({ customer, onClose, onCreated }: Props) {
 
   const editing = customer !== null;
   const showCredit =
-    editing && (customer.status === "approved" || customer.status === "suspended") && can(user.role, "customer.change_credit");
+    editing && hasCreditLine(customer.status) && can(user.role, "customer.change_credit");
   const pending = create.isPending || update.isPending;
 
   // After a failed submit, move focus to the first field with a problem so it is seen (and announced), even if the
@@ -144,6 +146,8 @@ export function CustomerFormModal({ customer, onClose, onCreated }: Props) {
     }
     setErrors({});
     setStale(false);
+    // The button that was pressed goes with the conflict banner: put focus in the form, on the first field.
+    window.setTimeout(() => dialogRef.current?.querySelector<HTMLElement>("input, textarea, select")?.focus(), 0);
   }
 
   const set = (key: keyof FormState) => (event: { target: { value: string } }) =>
@@ -206,8 +210,13 @@ export function CustomerFormModal({ customer, onClose, onCreated }: Props) {
       if (caught instanceof ApiClientError && caught.code === "stale") {
         // The cached copy is the one this form was opened from: bring in the newest, or "keep mine" would be sent against the
         // same old version and fail the same way again.
-        await queryClient.refetchQueries({ queryKey: ["customers"] }).catch(() => undefined);
-        setStale(true);
+        await queryClient.refetchQueries({ queryKey: ["customers"] }, { throwOnError: true }).then(
+          () => setStale(true),
+          () => {
+            // Without the newest copy "keep mine" would be sent against the same old version and fail the same way, over and over.
+            setFormError("Someone else changed this customer, and the newest copy could not be loaded. Check your connection, close this form and open it again.");
+          },
+        );
       } else if (caught instanceof ApiClientError) {
         const { errors: inline } = mapFields(caught.fields);
         setErrors(inline);

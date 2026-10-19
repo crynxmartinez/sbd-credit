@@ -12,7 +12,7 @@ export function GET(_request: NextRequest, { params }: Context) {
     await requireUser();
     const { id } = await params;
     return ok(await getDetail(id, businessToday()));
-  });
+  }, { request: _request });
 }
 
 export function PATCH(request: NextRequest, { params }: Context) {
@@ -23,5 +23,5 @@ export function PATCH(request: NextRequest, { params }: Context) {
     const input = await readJson(request, customerUpdateSchema);
     await updateCustomer(id, input, user);
     return ok({ updated: true });
-  });
+  }, { request });
 }

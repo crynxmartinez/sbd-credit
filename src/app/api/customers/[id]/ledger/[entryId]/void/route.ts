@@ -14,5 +14,5 @@ export function POST(request: NextRequest, { params }: Context) {
     const { reason } = await readJson(request, voidSchema);
     await voidEntry(id, entryId, reason, user);
     return ok({ voided: true });
-  });
+  }, { request });
 }

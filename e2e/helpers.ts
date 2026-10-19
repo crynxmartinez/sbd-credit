@@ -54,3 +54,12 @@ export async function balanceText(page: Page): Promise<string> {
   const text = await drawer(page).locator(".balance-big").first().innerText();
   return text.trim();
 }
+
+/**
+ * A calendar day (YYYY-MM-DD) `days` before today IN THE ZONE THE BOOKS ARE KEPT IN (the app's default, America/Chicago), never the
+ * machine's own: a browser or a CI runner in another zone is on a different day for part of every 24 hours, and a test that used
+ * its own clock would then date entries "tomorrow" or "yesterday" as far as the server is concerned.
+ */
+export function businessDaysAgo(days: number, timeZone = "America/Chicago"): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(Date.now() - days * 86_400_000));
+}

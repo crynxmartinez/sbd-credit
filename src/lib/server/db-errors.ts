@@ -22,6 +22,8 @@ export function classifyDbError(error: unknown): DbOutcome {
   const { code, meta, message } = error as { code?: unknown; meta?: { code?: unknown }; message?: unknown };
   const sqlstates = [typeof code === "string" ? code : undefined, typeof meta?.code === "string" ? meta.code : undefined];
 
+  // pg's own words for "the connection never opened" also contain "Connection terminated": nothing could have been written yet.
+  if (typeof message === "string" && /Connection terminated due to connection timeout/i.test(message)) return "not_saved";
   // A dropped connection is checked first: it is the one case where "nothing was saved" would be a guess.
   if ((typeof code === "string" && UNKNOWN_PRISMA.has(code)) || sqlstates.some((value) => value !== undefined && UNKNOWN_SQLSTATES.has(value))) {
     return "unknown_outcome";

@@ -1,5 +1,5 @@
 import type { AgingBucket, LedgerType } from "./constants";
-import { diffDays } from "./dates";
+import { compareText, diffDays } from "./dates";
 import { sumCents } from "./money";
 
 /**
@@ -95,7 +95,7 @@ function debitsOf(entries: readonly LedgerRecord[]): Debit[] {
       entryDate: entry.entryDate,
       remainingCents: entry.amountCents,
     }))
-    .sort((a, b) => a.dueDate.localeCompare(b.dueDate) || a.entryDate.localeCompare(b.entryDate) || a.id.localeCompare(b.id));
+    .sort((a, b) => compareText(a.dueDate, b.dueDate) || compareText(a.entryDate, b.entryDate) || compareText(a.id, b.id));
 }
 
 /**

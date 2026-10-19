@@ -22,7 +22,7 @@ console.log(`[with-dev-db] using schema "${schema}", not the live data`);
 
 // The child (a dev server, a test run, a dependency's install script) gets the pinned dev address and nothing else:
 // the raw server addresses from .env.databases are removed so no process in there can read the live URL.
-const RAW_ADDRESS_KEYS = new Set(["LIVE_DATABASE_URL", "LIVE_DATABASE_URL_DIRECT", "TEST_DATABASE_URL"]);
+const RAW_ADDRESS_KEYS = new Set(["LIVE_DATABASE_URL", "LIVE_DATABASE_URL_DIRECT", "DEV_DATABASE_URL_DIRECT", "TEST_DATABASE_URL"]);
 const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !RAW_ADDRESS_KEYS.has(key)));
 
 const child = spawn(joinCommand(command), {

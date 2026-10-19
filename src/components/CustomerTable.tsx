@@ -1,6 +1,7 @@
 "use client";
 
 import { memo } from "react";
+import { PHONE_QUERY, useMediaQuery } from "@/lib/client/media";
 import type { SortDirection, SortKey } from "@/lib/domain/customer-list";
 import { formatCents } from "@/lib/domain/money";
 import { dateInZone, formatDate } from "@/lib/domain/dates";
@@ -50,12 +51,16 @@ function None() {
   );
 }
 
+/**
+ * The next due date (only for an account with a credit line) and any overdue amount. Overdue money is shown WHATEVER the status:
+ * a denied or reopened customer who still owes it is exactly who someone needs to see. The table and the phone cards share this.
+ */
 function NextDue({ customer }: { customer: CustomerSummary }) {
-  const tracked = hasCreditLine(customer.status);
-  if (!tracked || !customer.nextDueDate) return <None />;
+  const due = hasCreditLine(customer.status) && customer.nextDueDate ? customer.nextDueDate : null;
+  if (!due && customer.overdueCents <= 0) return <None />;
   return (
     <>
-      <div>{formatDate(customer.nextDueDate)}</div>
+      {due ? <div>{formatDate(due)}</div> : <None />}
       {customer.overdueCents > 0 ? (
         <div className="cust-contact" style={{ color: "var(--red)", fontWeight: 600 }}>
           {formatCents(customer.overdueCents)} overdue
@@ -116,40 +121,44 @@ function SkeletonRows({ columns }: { columns: number }) {
   );
 }
 
-/** On a phone the table is replaced by a card per customer: the columns that matter, with no sideways scrolling. */
-function CustomerCards({ customers, caption }: { customers: readonly CustomerSummary[]; caption: string }) {
+/** One customer as a card. Memoized like the table row, so typing in the search box does not rebuild every card. */
+const CardItem = memo(function CardItem({ customer }: { customer: CustomerSummary }) {
   const { openCustomer } = useUi();
   return (
+    <li>
+      <button type="button" className="cust-card" onClick={() => openCustomer(customer.id)}>
+        <span className="cust-card-top">
+          <b>{customer.businessName}</b>
+          <StatusBadge status={customer.status} />
+        </span>
+        <span className="cust-card-grid">
+          <span>
+            <span className="kv-label">Balance</span>
+            <span className="mono">{formatCents(customer.balanceCents)}</span>
+          </span>
+          <span>
+            <span className="kv-label">Credit limit</span>
+            <span className="mono">{customer.creditLimitCents ? formatCents(customer.creditLimitCents) : "none"}</span>
+          </span>
+          <span>
+            <span className="kv-label">Next payment due</span>
+            <span>
+              <NextDue customer={customer} />
+            </span>
+          </span>
+        </span>
+      </button>
+    </li>
+  );
+});
+
+/** On a phone the table is replaced by a card per customer: the columns that matter, with no sideways scrolling. */
+function CustomerCards({ customers, caption }: { customers: readonly CustomerSummary[]; caption: string }) {
+  return (
     <ul className="cust-cards" aria-label={caption}>
+      {customers.length === 0 ? <li className="cust-empty">No customers to show.</li> : null}
       {customers.map((customer) => (
-        <li key={customer.id}>
-          <button type="button" className="cust-card" onClick={() => openCustomer(customer.id)}>
-            <span className="cust-card-top">
-              <b>{customer.businessName}</b>
-              <StatusBadge status={customer.status} />
-            </span>
-            <span className="cust-card-grid">
-              <span>
-                <span className="kv-label">Balance</span>
-                <span className="mono">{formatCents(customer.balanceCents)}</span>
-              </span>
-              <span>
-                <span className="kv-label">Credit limit</span>
-                <span className="mono">{customer.creditLimitCents ? formatCents(customer.creditLimitCents) : "none"}</span>
-              </span>
-              <span>
-                <span className="kv-label">Next payment due</span>
-                <span>{hasCreditLine(customer.status) && customer.nextDueDate ? formatDate(customer.nextDueDate) : "none"}</span>
-              </span>
-              {customer.overdueCents > 0 ? (
-                <span style={{ color: "var(--red)", fontWeight: 600 }}>
-                  <span className="kv-label" style={{ color: "var(--red)" }}>Past due</span>
-                  {formatCents(customer.overdueCents)}
-                </span>
-              ) : null}
-            </span>
-          </button>
-        </li>
+        <CardItem key={customer.id} customer={customer} />
       ))}
     </ul>
   );
@@ -158,10 +167,12 @@ function CustomerCards({ customers, caption }: { customers: readonly CustomerSum
 export function CustomerTable({ customers, variant, loading, sort, onSort, caption }: Props) {
   const timeZone = useBusinessTimeZone();
   const columns = variant === "full" ? FULL_COLUMNS.length : RECENT_COLUMNS.length;
+  const phone = useMediaQuery(PHONE_QUERY);
+  // ONE layout is built, not both with CSS hiding one: on a long list every customer used to be in the page twice.
+  if (phone && !loading) return <CustomerCards customers={customers} caption={caption} />;
   return (
     <>
-    {!loading ? <div className="cards-only"><CustomerCards customers={customers} caption={caption} /></div> : null}
-    <div className={`table-wrap${loading ? "" : " table-only"}`}>
+    <div className="table-wrap">
       <table aria-busy={loading ? true : undefined}>
         <caption className="sr-only">{caption}</caption>
         <thead>

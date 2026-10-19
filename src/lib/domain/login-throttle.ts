@@ -40,6 +40,8 @@ export interface LoginThrottle {
   fail(key: string): void;
   /** Forgets the key: a right password. */
   succeed(key: string): void;
+  /** Takes one failure back: the attempt failed for a reason that was not the person's (the server was busy, the database was down). */
+  forgive(key: string): void;
   size(): number;
 }
 
@@ -93,6 +95,18 @@ export function createLoginThrottle({ now = Date.now, freeFailures = FREE_FAILUR
     },
     succeed(key) {
       states.delete(key);
+    },
+    forgive(key) {
+      const at = now();
+      const state = live(key, at);
+      if (!state) return;
+      if (state.failures <= 1) {
+        states.delete(key);
+        return;
+      }
+      const failures = state.failures - 1;
+      // The wait that follows from the lower count, counted from the last failure, and never longer than it already was.
+      states.set(key, { failures, lastFailureAt: state.lastFailureAt, blockedUntil: Math.min(state.blockedUntil, state.lastFailureAt + cooldownAfter(failures, freeFailures)) });
     },
     size: () => states.size,
   };

@@ -1,5 +1,6 @@
 name: CI
 
+# Third-party actions are pinned to a commit (Dependabot updates them), not to a tag that can be moved.
 # Runs on every push and pull request. `check` needs no database and no secrets. `database` and `browser` start a throwaway
 # Postgres next to the job, so the integration and browser suites run on every change too: nothing here touches real data.
 on:
@@ -12,7 +13,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push replaces a running check on a branch, but never cancels the run on main (that is the record of what shipped).
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   NEXT_TELEMETRY_DISABLED: "1"
@@ -22,11 +24,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -71,10 +73,10 @@ jobs:
       # The scripts read this when there is no .env.databases file. It is a throwaway server that exists only for this job.
       TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -83,6 +85,12 @@ jobs:
         run: npm run test:db
       - name: Restore drill (a backup restores to an identical copy)
         run: npm run restore-drill -- credit_test
+      # The migrations and schema.prisma must describe the same tables: a model changed without a migration (or the reverse) is
+      # found here, not in production. (Triggers and functions are not in schema.prisma; the integration tests cover those.)
+      - name: Migrations and schema.prisma agree
+        env:
+          CREDIT_DEV_SCHEMA: credit_test
+        run: node scripts/with-dev-db.mjs npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
 
   browser:
     runs-on: ubuntu-latest
@@ -103,10 +111,10 @@ jobs:
       TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
       SESSION_SECRET: ci-only-secret-for-the-throwaway-test-database-0123456789
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -114,9 +122,116 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Browser tests (real sign-in, roles, money flows, customer isolation, accessibility)
         run: npm run e2e
-      - name: Keep the server log if it failed
+      - name: Keep the server log, screenshots and traces if it failed
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: e2e-server-log
-          path: e2e-server.log
+          name: e2e-failure
+          path: |
+            e2e-server.log
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # The unit tests do not depend on the time zone of the machine. Proved here in zones far from the books' own (UTC, the farthest
+  # ahead of it, the farthest behind), because a date computed from the machine's clock is wrong only for part of each day.
+  zones:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        tz: [UTC, Pacific/Kiritimati, Pacific/Pago_Pago]
+    env:
+      TZ: ${{ matrix.tz }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Unit tests in ${{ matrix.tz }}
+        run: npx vitest run
+
+  # The developer's machine is Windows. Types, lint and unit tests must hold there too (paths, line endings, quoting in the scripts).
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npx vitest run
+
+  # docs/PRODUCTION.md section 2, executed: two roles, the migrations as the owner, scripts/grants.sql, and then the checks of Step D
+  # as the app's login. A migration that adds a table without the app being able to use it (or that opens something it should not)
+  # fails here instead of at the first sign-in in production.
+  grants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ADMIN_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      # psql and node-postgres take a plain address (the app's schema is its role's search_path); only Prisma reads ?schema=.
+      OWNER_URL: postgres://credit_owner:owner-pw@127.0.0.1:5432/postgres
+      APP_URL: postgres://credit_app:app-pw@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Step A - the two roles and the schema
+        run: |
+          psql "$ADMIN_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE credit_owner LOGIN PASSWORD 'owner-pw';
+          CREATE ROLE credit_app LOGIN PASSWORD 'app-pw';
+          CREATE SCHEMA credit AUTHORIZATION credit_owner;
+          GRANT USAGE ON SCHEMA credit TO credit_app;
+          ALTER ROLE credit_app SET search_path = credit;
+          SQL
+      - name: Step B - migrate as the owner
+        run: npx prisma migrate deploy
+        env:
+          NODE_ENV: production
+          DATABASE_URL: ${{ env.OWNER_URL }}?schema=credit
+      - name: Step C - grants
+        run: psql "$OWNER_URL" -v ON_ERROR_STOP=1 -f scripts/grants.sql
+      - name: Step D - what the app's login can and cannot do
+        run: node scripts/verify-grants.mjs
+        env:
+          APP_DATABASE_URL: ${{ env.APP_URL }}
+
+  # One name for branch protection to require, however many jobs there are.
+  ci-ok:
+    if: always()
+    needs: [check, database, browser, zones, windows, grants]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job passed
+        run: |
+          echo '${{ toJSON(needs) }}'
+          test "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" = "false"
