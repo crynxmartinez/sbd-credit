@@ -90,7 +90,7 @@ jobs:
       - name: Migrations and schema.prisma agree
         env:
           CREDIT_DEV_SCHEMA: credit_test
-        run: node scripts/with-dev-db.mjs prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+        run: node scripts/with-dev-db.mjs npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
 
   browser:
     runs-on: ubuntu-latest
