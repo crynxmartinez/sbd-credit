@@ -147,6 +147,16 @@ export async function assertBooksAgree(customerId: string, context: string, TODA
   expect(open, `${context}: open = max(0, balance)`).toBe(Math.max(0, want.balance));
   expect(want.credit, `${context}: credit = max(0, -balance)`).toBe(Math.max(0, -want.balance));
 
+  // 2b. What the customer is shown follows the account's standing: the credit line only while there is one, "available" only while active.
+  const status = detail.customer.status;
+  const limit = detail.customer.creditLimitCents;
+  const standing = status === "approved" ? "active" : status === "suspended" ? "on_hold" : "in_review";
+  expect(portal!.standing, `${context}: portal standing`).toBe(standing);
+  expect(portal!.availableCents, `${context}: portal available credit`).toBe(standing === "active" ? Math.min(limit, Math.max(0, limit - want.balance)) : 0);
+  expect(portal!.creditLimitCents, `${context}: portal credit limit`).toBe(standing === "in_review" ? 0 : limit);
+  const visible = rows.filter((row) => !row.voided && row.d <= TODAY).length;
+  expect(portal!.entries.length, `${context}: the customer is shown every live entry dated up to today (newest 200)`).toBe(Math.min(200, visible));
+
   // 3. What the customer sees adds up to what the customer owes (the portal shows the newest 200 only).
   if (portal!.entries.length < 200) {
     expect(portal!.entries.reduce((sum, entry) => sum + entry.amountCents, 0), `${context}: portal entries sum to the balance`).toBe(want.balance);

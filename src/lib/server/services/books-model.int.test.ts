@@ -2,12 +2,15 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import fc from "fast-check";
 import { describe, expect, test } from "vitest";
+import type { CustomerStatus } from "@/lib/domain/constants";
 import { addDays } from "@/lib/domain/dates";
+import { availableDecisions } from "@/lib/domain/status";
 import { buildDashboard } from "@/lib/domain/dashboard";
 import { writeOffTargets, type Allocation } from "@/lib/domain/write-off";
 import { ApiError } from "@/lib/server/http";
 import type { SessionUser } from "@/lib/types";
-import type { CustomerCreateInput, LedgerEntryInput } from "@/lib/validation";
+import type { CustomerCreateInput, DecisionInput, LedgerEntryInput } from "@/lib/validation";
+import { prisma } from "@/lib/server/db";
 import { assertBooksAgree, footprint, rawRows } from "@/test/books-oracle";
 import { businessToday } from "../as-of";
 import type { Clock } from "../clock";
@@ -45,6 +48,7 @@ type Op =
   | { k: "writeoff"; amt: number; ago: number; chosen: boolean; pick: number }
   | { k: "reverse"; idx: number }
   | { k: "void"; idx: number }
+  | { k: "decide"; which: number }
   | { k: "bad"; which: number };
 
 /** Mostly this month (so voids are allowed and every date interacts), sometimes a closed month, sometimes a day or two ahead. */
@@ -57,6 +61,7 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
   { weight: 4, arbitrary: fc.record({ k: fc.constant("writeoff" as const), amt: fc.integer({ min: 1, max: 40 }), ago: fc.integer({ min: 0, max: 6 }), chosen: fc.boolean(), pick: fc.nat(20) }) },
   { weight: 2, arbitrary: fc.record({ k: fc.constant("reverse" as const), idx: fc.nat(30) }) },
   { weight: 2, arbitrary: fc.record({ k: fc.constant("void" as const), idx: fc.nat(30) }) },
+  { weight: 1, arbitrary: fc.record({ k: fc.constant("decide" as const), which: fc.nat(20) }) },
   { weight: 1, arbitrary: fc.record({ k: fc.constant("bad" as const), which: fc.nat(4) }) },
 );
 
@@ -114,6 +119,19 @@ async function run(ops: readonly Op[]): Promise<void> {
       } else if (op.k === "void" && made.length > 0) {
         await voidEntry(customerId, made[op.idx % made.length]!.id, "model void", ADMIN, clock);
         count("accepted void");
+      } else if (op.k === "decide") {
+        // A change of standing in the middle of the books: suspend, reopen, send back to review, approve again, deny. Some are refused.
+        const current = await prisma.customer.findUniqueOrThrow({ where: { id: customerId }, select: { status: true, version: true } });
+        // Three times in four a move the workflow allows (so the account really travels through its states), otherwise any move at all.
+        const allowed = availableDecisions(current.status as CustomerStatus, "ADMIN");
+        const action = op.which % 4 !== 0 && allowed.length > 0 ? allowed[op.which % allowed.length]! : (["suspend", "reopen", "start_review", "approve", "deny"] as const)[op.which % 5]!;
+        const version = current.version;
+        const input: DecisionInput =
+          action === "approve" ? { action, version, creditLimitCents: 75_000, paymentTerms: "Net 30", creditStartDate: "2026-10-01" }
+          : action === "deny" || action === "suspend" ? { action, version, reason: "model decision" }
+          : { action, version };
+        await decide(customerId, input, ADMIN);
+        count(`accepted decide ${action}`);
       } else if (op.k === "bad") {
         // Requests that must be refused, each for a reason, none of them allowed to leave anything behind.
         const bad = [
