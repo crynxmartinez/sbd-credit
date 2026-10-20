@@ -9,6 +9,7 @@ import { ledgerCsvRow } from "./ledger-csv";
 import { parseMoneyToCents } from "./money";
 import { toPortalView, type PortalSourceEntry } from "./portal";
 import { filterCustomers, isSortKey, sortCustomers } from "./customer-list";
+import { BACKUP_FORMAT, reviveBackup } from "./backup";
 import { toSummary } from "./summary";
 import {
   allocationsTo,
@@ -441,5 +442,73 @@ describe("the customer list: every column sorts by its own figure, both ways", (
     expect(isSortKey("Limit")).toBe(false);
     expect(filterCustomers(list, "all", "   ")).toHaveLength(3);
     expect(filterCustomers(list, "all", "zzz")).toHaveLength(0);
+  });
+});
+
+describe("a damaged backup is refused before anything is written (every way the file can be wrong)", () => {
+  const backup = (overrides: Record<string, unknown> = {}) => ({
+    format: BACKUP_FORMAT, schema: "credit_dev", takenAt: "2026-10-14T00:00:00.000Z",
+    counts: { customers: 1, ledger: 2, audit: 1, portalContacts: 1, writeOffAllocations: 1, users: 1 },
+    customers: [{ id: "c1", dateApplied: "2026-10-01T00:00:00.000Z", statusChangedOn: "2026-10-01T00:00:00.000Z", createdAt: "2026-10-01T10:00:00.000Z", updatedAt: "2026-10-01T10:00:00.000Z" }],
+    ledger: [
+      { id: "charge", customerId: "c1", entryDate: "2026-10-02T00:00:00.000Z", createdAt: "2026-10-02T10:00:00.000Z" },
+      { id: "writeoff", customerId: "c1", entryDate: "2026-10-03T00:00:00.000Z", createdAt: "2026-10-03T10:00:00.000Z" },
+    ],
+    audit: [{ id: "a1", customerId: "c1", ledgerEntryId: "charge", createdAt: "2026-10-02T10:00:01.000Z" }],
+    portalContacts: [{ id: "p1", customerId: "c1", email: "a@example.com", createdAt: "2026-10-02T10:00:00.000Z", updatedAt: "2026-10-02T10:00:00.000Z", sessionVersion: 1 }],
+    writeOffAllocations: [{ id: "w1", writeOffEntryId: "writeoff", chargeEntryId: "charge", amountCents: 5, createdAt: "2026-10-03T10:00:01.000Z" }],
+    users: [{ id: "u1", username: "admin", name: "Admin", role: "ADMIN", active: true, sessionVersion: 1 }],
+    ...overrides,
+  });
+
+  test("a complete backup is accepted, keeps its schema and time, and says what it counted", () => {
+    const revived = reviveBackup(backup());
+    expect(revived.schema).toBe("credit_dev");
+    expect(revived.takenAt).toBe("2026-10-14T00:00:00.000Z");
+    expect(revived.counts).toEqual({ customers: 1, ledger: 2, audit: 1, portalContacts: 1, writeOffAllocations: 1, users: 1 });
+    expect(revived.allocationsIncluded).toBe(true);
+    expect(revived.writeOffAllocations[0]!.createdAt).toBeInstanceOf(Date);
+    expect(reviveBackup(backup({ schema: undefined, takenAt: undefined })).schema).toBe("");
+  });
+
+  test("an older backup, with no allocations, contacts or users sections, is accepted and says allocations were not included", () => {
+    const old = backup({ portalContacts: undefined, writeOffAllocations: undefined, users: undefined, counts: { customers: 1, ledger: 2, audit: 1 } });
+    const revived = reviveBackup(old);
+    expect(revived.allocationsIncluded).toBe(false);
+    expect(revived.users).toEqual([]);
+    expect(revived.counts).toEqual({ customers: 1, ledger: 2, audit: 1, portalContacts: 0 });
+  });
+
+  test.each([
+    ["rows that are not rows (a list inside the list)", backup({ audit: [[1]], counts: { customers: 1, ledger: 2, audit: 1, portalContacts: 1, writeOffAllocations: 1, users: 1 } }), /missing customers, ledger or audit/],
+    ["a null row", backup({ ledger: [null, null], counts: { customers: 1, ledger: 2, audit: 1, portalContacts: 1, writeOffAllocations: 1, users: 1 } }), /missing customers, ledger or audit/],
+    ["a portal contacts section that is not a list", backup({ portalContacts: "damaged" }), /portal contacts section is damaged/],
+    ["a portal contacts section with a bad row", backup({ portalContacts: [5] }), /portal contacts section is damaged/],
+    ["an allocations section that is not a list", backup({ writeOffAllocations: { a: 1 } }), /write-off allocations section is damaged/],
+    ["fewer contacts than the file says", backup({ portalContacts: [] }), /says 1 portalContacts rows but contains 0/],
+    ["fewer allocations than the file says", backup({ writeOffAllocations: [] }), /says 1 writeOffAllocations rows but contains 0/],
+    ["a cut-short audit section", backup({ audit: [] }), /says 1 audit rows but contains 0/],
+    ["a cut-short customers section", backup({ counts: { customers: 3, ledger: 2, audit: 1, portalContacts: 1, writeOffAllocations: 1, users: 1 } }), /says 3 customers rows but contains 1/],
+    ["a missing counts block", backup({ counts: undefined }), /incomplete/],
+    ["fewer accounts than the file says", backup({ users: [] }), /says 1 users but contains 0/],
+    ["a users section that is not a list", backup({ users: "damaged", counts: { customers: 1, ledger: 2, audit: 1, portalContacts: 1, writeOffAllocations: 1 } }), /users section is damaged/],
+    ["an account with no id", backup({ users: [{ username: "admin", role: "ADMIN" }] }), /users\[0\] has no id/],
+    ["an account with an empty id", backup({ users: [{ id: "", username: "admin", role: "ADMIN" }] }), /users\[0\] has no id/],
+    ["an account that is not an object", backup({ users: [null] }), /users\[0\] has no id/],
+    ["an account with no username", backup({ users: [{ id: "u1", role: "ADMIN" }] }), /users\[0\] has no username/],
+    ["an account with an unknown role", backup({ users: [{ id: "u1", username: "x", role: "OWNER" }] }), /unknown role/],
+    ["two accounts with the same username", backup({ users: [{ id: "u1", username: "x", role: "ADMIN" }, { id: "u2", username: "x", role: "EMPLOYEE" }], counts: { customers: 1, ledger: 2, audit: 1, portalContacts: 1, writeOffAllocations: 1, users: 2 } }), /same username/],
+    ["an allocation naming a write-off that is not in the backup", backup({ writeOffAllocations: [{ id: "w1", writeOffEntryId: "ghost", chargeEntryId: "charge", amountCents: 5 }] }), /writeOffAllocations\[0\] refers to a ledger entry/],
+    ["an allocation naming a charge that is not in the backup", backup({ writeOffAllocations: [{ id: "w1", writeOffEntryId: "writeoff", chargeEntryId: "ghost", amountCents: 5 }] }), /writeOffAllocations\[0\] refers to a ledger entry/],
+    ["a contact of a customer that is not in the backup", backup({ portalContacts: [{ id: "p1", customerId: "ghost", email: "a@example.com" }] }), /portalContacts\[0\] belongs to a customer/],
+    ["two contacts with one email", backup({ portalContacts: [{ id: "p1", customerId: "c1", email: "a@example.com" }, { id: "p2", customerId: "c1", email: "a@example.com" }], counts: { customers: 1, ledger: 2, audit: 1, portalContacts: 2, writeOffAllocations: 1, users: 1 } }), /same email/],
+    ["a history line of a customer that is not in the backup", backup({ audit: [{ id: "a1", customerId: "ghost", ledgerEntryId: null, createdAt: "2026-10-02T10:00:01.000Z" }] }), /audit\[0\] belongs to a customer/],
+    ["a customer with an unknown payment term", backup({ customers: [{ id: "c1", paymentTerms: "Whenever", dateApplied: "2026-10-01T00:00:00.000Z" }] }), /not a known payment term: Whenever/],
+  ])("%s", (_name, input, message) => {
+    expect(() => reviveBackup(input)).toThrow(message);
+  });
+
+  test("a history line with no ledger entry is fine (an application or a decision has none)", () => {
+    expect(() => reviveBackup(backup({ audit: [{ id: "a1", customerId: "c1", ledgerEntryId: null, createdAt: "2026-10-02T10:00:01.000Z" }] }))).not.toThrow();
   });
 });
