@@ -45,6 +45,8 @@ GRANT USAGE ON SCHEMA credit TO credit_app;
 ALTER ROLE credit_app SET search_path = credit;
 ```
 
+**The database must be UTF8** (`SHOW server_encoding;`). The app writes characters such as the minus sign into the history of a negative adjustment or a reversal, which other encodings cannot hold; in production it refuses to start on any other encoding, and says so.
+
 **Step B: migrate** as `credit_owner` (section 4). This creates every table.
 
 **Step C, AFTER the migration** (as `credit_owner` or an administrator). Granting on tables that do not exist yet silently
@@ -240,6 +242,15 @@ is written; the name typed into the sign-in box is never logged. Every error sho
 | `auth.logout_revoke_failed` / `auth.customer_logout_revoke_failed` | error | A sign-out could not be saved; the person was told to try again |
 | `export.downloaded` | info | Who downloaded a CSV of customer data, and which |
 
+- **Nightly reconciliation: would anyone notice?** `npm run reconcile` checks the books against themselves, read-only, as the app's own
+  login: `NODE_ENV=production DATABASE_URL="<app-url>" npx tsx scripts/reconcile.ts`. It exits 0 when every check passes and 1 on any
+  finding, so run it from cron or the host's scheduler and alert on a non-zero exit. A finding means something happened that the
+  application cannot do, so treat each as an incident (and keep the output). It re-sums every customer's balance in the database and
+  compares it with the application's arithmetic, re-checks that what is open adds up to what is owed, that every write-off is
+  allocated in full and no charge is written off for more than it is, that every reversal offsets exactly what it names, that every
+  ledger entry has a history line and that the amount in that line is the amount on the entry (so an amount changed with the owner's
+  keys is found), that no entry is outside the dates and amounts the application allows, and that every append-only trigger exists and
+  is switched on. About 40,000 entries take a few seconds; 200,000 take under a minute.
 - Point an uptime monitor at `/api/health` (503 if the database is unreachable). It is public, queries the database, and is not
   rate-limited by the app: rate-limit it at the proxy.
 - Alert on any `"level":"error"` line, on bursts of `auth.login_failed`, and on `auth.many_failed_logins`.

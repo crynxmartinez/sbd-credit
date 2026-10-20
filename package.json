@@ -23,7 +23,10 @@
     "restore": "node scripts/with-dev-db.mjs tsx scripts/restore.ts",
     "user": "node scripts/with-dev-db.mjs tsx scripts/users.ts",
     "e2e": "node scripts/e2e.mjs",
-    "restore-drill": "node scripts/restore-drill.mjs"
+    "restore-drill": "node scripts/restore-drill.mjs",
+    "test:books": "node scripts/test-db.mjs books-",
+    "mutation": "stryker run",
+    "reconcile": "node scripts/with-dev-db.mjs tsx scripts/reconcile.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
@@ -40,6 +43,8 @@
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
     "@playwright/test": "^1.64.0",
+    "@stryker-mutator/core": "^10.0.0",
+    "@stryker-mutator/vitest-runner": "^10.0.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^20",
     "@types/pg": "^8.21.0",

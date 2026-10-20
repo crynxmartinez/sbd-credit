@@ -26,6 +26,7 @@ Own app, same Postgres database server as the Storage Materials shipper app.
 - `npm run user -- list|create|reset-password|deactivate|activate|unlock|end-all-sessions` — sign-in accounts
 - `npm run e2e` — Playwright (Edge) against `credit_test_e2e`; run it after any UI or auth change
 - `scripts/grants.sql` is the ONE copy of the app role's grants (runbook Step C); `node scripts/verify-grants.mjs` checks them; the CI `grants` job runs both
+- `npm run reconcile` — read-only nightly check of the books against themselves (exit 1 on any finding); `npm run test:books` — the books under attack (model, concurrency, snapshot, fault, catalog, reconcile, and `BOOKS_SCALE=1` for size + pg_dump); `npm run mutation` — Stryker on the money rules. Findings and method: `docs/BOOKS_AUDIT.md`
 - Production runbook: `docs/PRODUCTION.md`
 - Customer portal: Phase 1 built; plan and what is next in `docs/PORTAL_PLAN.md`
 - `npm run test:db -- <name>` runs only the integration test files whose name contains it (e.g. `portal`)
@@ -45,6 +46,7 @@ Own app, same Postgres database server as the Storage Materials shipper app.
   The other writes (void, decide, update, portal access) are protected by their own state or version checks instead.
 - "Today" is the business day (`BUSINESS_TIME_ZONE`), decided by the server and returned with the data. The browser never sends a date for this. Services take a `Clock` (`src/lib/server/clock.ts`) instead of reading the time themselves.
 - One copy of each rule, in `domain/`, used by the service AND the screen: `hasCreditLine` / `canTakePayment` / `showsCreditPanel` / `availableDecisions` (`status.ts`), `correctionFor` (void or reverse), `entryDateWindow` / `entryDateIssue` (which dates a role may use), `effectOnBalance`. Do not re-implement them in a component.
+- A screen is ONE moment: reads that make up a figure (list, detail, portal) run in one repeatable-read snapshot (`customers.ts`, `portal.ts`), and every ORDER BY has an id tie-break. Do not add a read to those paths outside the snapshot. Do not use sibling `include`s inside a transaction (Prisma runs them in parallel on one connection).
 - Balance is never stored: it is the sum of ledger entries. Ledger and audit rows are append-only; mistakes are voided, not edited.
 - Ledger types: CHARGE adds; PAYMENT and WRITE_OFF reduce; ADJUSTMENT and REVERSAL are signed. `effectOnBalance()` in `domain/ledger.ts` is the one place that knows the sign. The SQL in `services/ledger.ts` mirrors it, so change both together.
 - A void is only for the current business month. Older entries are corrected by a reversal dated today (`reverseEntry`). A reversal is never posted directly, never reversed, and never voided; a reversed entry is never voided.
