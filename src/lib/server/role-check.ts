@@ -19,6 +19,8 @@ export interface RoleFacts {
   canTrigger: boolean;
   canUpdateAudit: boolean;
   ownsTables: boolean;
+  /** The database's character encoding. The app writes characters (such as the minus sign in an audit summary) that only UTF8 can hold. */
+  serverEncoding: string;
 }
 
 /** What is wrong with this login for running the app, in words. Empty when it is the restricted role. Pure. */
@@ -34,6 +36,7 @@ export function roleProblems(facts: RoleFacts): string[] {
   if (facts.canTrigger !== false) problems.push("the database login can switch the ledger's TRIGGERs off");
   if (facts.canUpdateAudit !== false) problems.push("the database login can edit the audit log");
   if (facts.ownsTables !== false) problems.push("the database login owns the tables (use the separate owner login only for migrations)");
+  if (facts.serverEncoding !== "UTF8") problems.push(`the database encoding is ${String(facts.serverEncoding)}, not UTF8 (a negative adjustment or a reversal would be refused when its history line is written)`);
   return problems;
 }
 
@@ -45,6 +48,7 @@ export async function readRoleFacts(): Promise<RoleFacts> {
            has_table_privilege(current_user, '"LedgerEntry"', 'TRUNCATE') AS "canTruncate",
            has_table_privilege(current_user, '"LedgerEntry"', 'TRIGGER') AS "canTrigger",
            has_table_privilege(current_user, '"AuditEvent"', 'UPDATE') AS "canUpdateAudit",
+           current_setting('server_encoding') AS "serverEncoding",
            (SELECT t."tableowner" = current_user FROM pg_tables t WHERE t."schemaname" = current_schema() AND t."tablename" = 'LedgerEntry') AS "ownsTables"
     FROM pg_roles r WHERE r."rolname" = current_user`;
   if (!row) throw new Error("could not read the database login's privileges");

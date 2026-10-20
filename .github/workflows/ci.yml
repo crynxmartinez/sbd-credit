@@ -225,10 +225,58 @@ jobs:
         env:
           APP_DATABASE_URL: ${{ env.APP_URL }}
 
+  # The books under attack (docs/BOOKS_AUDIT.md): random programs of real service calls checked against an independent one-cent-at-a-time
+  # oracle, many writers at once, reads that race a write, a connection cut at the worst moment, the catalog of the database itself, and the
+  # whole thing at size (thousands of customers, hundreds of thousands of ledger rows) with a pg_dump into a clean database.
+  books:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      BOOKS_SCALE: "1"
+      BOOKS_MODEL_RUNS: "80"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: pg_dump and pg_restore (same major version as the server)
+        run: |
+          if ! ls /usr/lib/postgresql/16/bin/pg_dump >/dev/null 2>&1; then
+            sudo apt-get update -y && sudo apt-get install -y postgresql-client-16
+          fi
+          echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+      - name: The books, attacked
+        run: npm run test:books
+      - name: Keep the size and timing report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: books-scale-report
+          path: reports/books-scale.json
+          if-no-files-found: ignore
+          retention-days: 30
+
   # One name for branch protection to require, however many jobs there are.
   ci-ok:
     if: always()
-    needs: [check, database, browser, zones, windows, grants]
+    needs: [check, database, browser, zones, windows, grants, books]
     runs-on: ubuntu-latest
     steps:
       - name: Every job passed

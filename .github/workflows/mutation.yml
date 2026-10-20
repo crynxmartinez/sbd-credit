@@ -1,0 +1,34 @@
+name: Mutation testing
+
+# Breaks the money rules on purpose (Stryker changes `+` to `-`, `>=` to `>`, and so on, one at a time) and checks that a test notices
+# each time. A mutant that SURVIVES is a way the books could be wrong with every test still green. Slow, so weekly and on request;
+# the score may not fall below the threshold in stryker.config.json.
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  domain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx stryker run
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          retention-days: 30

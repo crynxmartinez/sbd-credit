@@ -40,8 +40,12 @@ const stale = () =>
   new ApiError(409, "stale", "Someone else changed this customer. Reload to see the latest, then try again.");
 
 export async function listSummaries(asOf: string): Promise<CustomerSummary[]> {
-  const [customers, entries, allocations] = await Promise.all([
-    prisma.customer.findMany({ orderBy: { businessName: "asc" } }),
+  // ONE snapshot: the three reads are run in a single repeatable-read transaction, so a write that commits while the list is being
+  // read is either in all three or in none. Read separately (as they used to be), a write-off could land between the allocations and
+  // the ledger and be counted as an ordinary payment, moving money between aging buckets for a moment.
+  const [customers, entries, allocations] = await prisma.$transaction([
+    // The id settles two customers with the same name, so the list (and its ETag) is the same every time.
+    prisma.customer.findMany({ orderBy: [{ businessName: "asc" }, { id: "asc" }] }),
     // Voided entries never affect a balance or an aging bucket, so there is no reason to read them here.
     prisma.ledgerEntry.findMany({
       where: { voidedAt: null },
@@ -53,7 +57,7 @@ export async function listSummaries(asOf: string): Promise<CustomerSummary[]> {
       where: { writeOffEntry: { voidedAt: null } },
       select: { writeOffEntryId: true, chargeEntryId: true, amountCents: true },
     }),
-  ]);
+  ], { isolationLevel: "RepeatableRead" });
 
   const allocationsOf = new Map<string, Array<{ chargeEntryId: string; amountCents: number }>>();
   for (const allocation of allocations) {
@@ -73,25 +77,40 @@ export async function listSummaries(asOf: string): Promise<CustomerSummary[]> {
 }
 
 export async function getDetail(id: string, asOf: string): Promise<CustomerDetail> {
-  const row = await prisma.customer.findUnique({
-    where: { id },
-    include: {
-      ledger: {
-        include: { reversedBy: { select: { id: true } }, writeOffAllocations: { select: { chargeEntryId: true, amountCents: true } } },
-        orderBy: [{ entryDate: "desc" }, { createdAt: "desc" }, { id: "desc" }],
-      },
-      // The id breaks ties between events written in the same millisecond, so history never reshuffles between loads.
-      audit: { orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: AUDIT_HISTORY_LIMIT },
-    },
-  });
+  // One snapshot: the customer, the ledger, the allocations and the history all come from the same moment. (Loaded as separate
+  // statements, a reversal could commit between two of them and the page would show an entry as reversed with no reversal on it and a
+  // balance that still counted it.) The reads are issued one after another on purpose: Prisma runs sibling includes in parallel, which
+  // asks one database connection two questions at once (deprecated in the driver, and an error in the next major version).
+  const row = await prisma.$transaction(async (tx) => {
+    const customer = await tx.customer.findUnique({ where: { id } });
+    if (!customer) return null;
+    const ledger = await tx.ledgerEntry.findMany({ where: { customerId: id }, orderBy: [{ entryDate: "desc" }, { createdAt: "desc" }, { id: "desc" }] });
+    const writeOffIds = ledger.filter((entry) => entry.type === "WRITE_OFF").map((entry) => entry.id);
+    const allocations = writeOffIds.length === 0 ? [] : await tx.writeOffAllocation.findMany({ where: { writeOffEntryId: { in: writeOffIds } }, select: { writeOffEntryId: true, chargeEntryId: true, amountCents: true } });
+    // The id breaks ties between events written in the same millisecond, so history never reshuffles between loads.
+    const audit = await tx.auditEvent.findMany({ where: { customerId: id }, orderBy: [{ createdAt: "desc" }, { id: "desc" }], take: AUDIT_HISTORY_LIMIT });
+    return { customer, ledger, allocations, audit };
+  }, { isolationLevel: "RepeatableRead" });
   if (!row) throw notFound();
+  const reversedIds = new Set(row.ledger.filter((entry) => entry.reversesEntryId !== null).map((entry) => entry.reversesEntryId));
+  const allocationsOf = new Map<string, Array<{ chargeEntryId: string; amountCents: number }>>();
+  for (const allocation of row.allocations) {
+    const list = allocationsOf.get(allocation.writeOffEntryId);
+    if (list) list.push(allocation);
+    else allocationsOf.set(allocation.writeOffEntryId, [allocation]);
+  }
+  const ledgerRows = row.ledger.map((entry) => ({
+    ...entry,
+    reversedBy: reversedIds.has(entry.id) ? { id: row.ledger.find((other) => other.reversesEntryId === entry.id)!.id } : null,
+    writeOffAllocations: allocationsOf.get(entry.id) ?? [],
+  }));
 
-  const records = row.ledger.map(toLedgerRecord);
+  const records = ledgerRows.map(toLedgerRecord);
   const coverOf = writeOffCoverMap(records);
   return {
-    customer: toSummary(toCustomerBase(row), records, asOf),
+    customer: toSummary(toCustomerBase(row.customer), records, asOf),
     aging: computeAging(records, asOf),
-    ledger: row.ledger.map((entry) => toLedgerDto(entry, coverOf.get(entry.id))),
+    ledger: ledgerRows.map((entry) => toLedgerDto(entry, coverOf.get(entry.id))),
     audit: row.audit.map(toAuditDto),
   };
 }

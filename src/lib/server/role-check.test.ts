@@ -7,7 +7,7 @@ import { checkDatabaseRole, roleProblems, type RoleFacts } from "./role-check";
 
 const RESTRICTED: RoleFacts = {
   rolsuper: false, rolcreaterole: false, rolcreatedb: false,
-  canCreate: false, canDelete: false, canTruncate: false, canTrigger: false, canUpdateAudit: false, ownsTables: false,
+  canCreate: false, canDelete: false, canTruncate: false, canTrigger: false, canUpdateAudit: false, ownsTables: false, serverEncoding: "UTF8",
 };
 
 describe("roleProblems", () => {
@@ -25,6 +25,7 @@ describe("roleProblems", () => {
     ["a role that can switch triggers off", { canTrigger: true }, /TRIGGER/],
     ["a role that can edit the audit log", { canUpdateAudit: true }, /audit/i],
     ["the role that owns the tables", { ownsTables: true }, /owns/],
+    ["a database that is not UTF8", { serverEncoding: "WIN1252" }, /WIN1252.*not UTF8/],
   ] as const)("refuses %s", (_name, facts, pattern) => {
     const problems = roleProblems({ ...RESTRICTED, ...facts });
     expect(problems).toHaveLength(1);

@@ -11,8 +11,9 @@ import { toCustomerBase, toLedgerRecord } from "../serialize";
  * Every query below is scoped by `user.customerId`.
  */
 export async function getPortalView(user: PortalUser, asOf: string): Promise<PortalView | null> {
-  // Independent of each other, so one round trip to the database instead of two.
-  const [customer, entries] = await Promise.all([
+  // One snapshot, so the customer's standing and limit and the entries they are shown (and the figures computed from them) are from the
+  // same moment: what the customer sees adds up.
+  const [customer, entries] = await prisma.$transaction([
     prisma.customer.findUnique({ where: { id: user.customerId } }),
     prisma.ledgerEntry.findMany({
       where: { customerId: user.customerId, voidedAt: null },
@@ -21,7 +22,7 @@ export async function getPortalView(user: PortalUser, asOf: string): Promise<Por
         writeOffAllocations: { select: { chargeEntryId: true, amountCents: true } },
       },
     }),
-  ]);
+  ], { isolationLevel: "RepeatableRead" });
   if (!customer) return null;
 
   const rows = entries.map((entry) => ({ entry, record: toLedgerRecord(entry) }));

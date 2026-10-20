@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "vitest": { "configFile": "vitest.mutation.config.mts" },
+  "coverageAnalysis": "perTest",
+  "mutate": ["src/lib/server/services/ledger.ts"],
+  "reporters": ["clear-text", "json"],
+  "jsonReporter": { "fileName": "reports/mutation/services-ledger-rerun.json" },
+  "tempDirName": ".stryker-tmp-services",
+  "timeoutMS": 90000,
+  "dryRunTimeoutMinutes": 20,
+  "concurrency": 2,
+  "ignoreStatic": true
+}

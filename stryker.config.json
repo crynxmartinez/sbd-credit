@@ -1,0 +1,47 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "vitest.config.mts"
+  },
+  "coverageAnalysis": "perTest",
+  "mutate": [
+    "src/lib/domain/ledger.ts",
+    "src/lib/domain/write-off.ts",
+    "src/lib/domain/money.ts",
+    "src/lib/domain/dates.ts",
+    "src/lib/domain/summary.ts",
+    "src/lib/domain/portal.ts",
+    "src/lib/domain/corrections.ts",
+    "src/lib/domain/entry-dates.ts",
+    "src/lib/domain/status.ts",
+    "src/lib/domain/alerts.ts",
+    "src/lib/domain/dashboard.ts",
+    "src/lib/domain/customer-list.ts",
+    "src/lib/domain/ledger-csv.ts",
+    "src/lib/domain/backup.ts",
+    "src/lib/domain/idempotency.ts",
+    "src/lib/domain/csv.ts",
+    "!src/lib/**/*.test.ts"
+  ],
+  "reporters": [
+    "clear-text",
+    "json",
+    "html"
+  ],
+  "jsonReporter": {
+    "fileName": "reports/mutation/mutation.json"
+  },
+  "htmlReporter": {
+    "fileName": "reports/mutation/index.html"
+  },
+  "tempDirName": ".stryker-tmp",
+  "timeoutMS": 20000,
+  "concurrency": 4,
+  "ignoreStatic": true,
+  "thresholds": {
+    "high": 95,
+    "low": 90,
+    "break": 88
+  }
+}
