@@ -5,7 +5,7 @@
   "coverageAnalysis": "perTest",
   "mutate": ["src/lib/server/services/ledger.ts"],
   "reporters": ["clear-text", "json"],
-  "jsonReporter": { "fileName": "reports/mutation/services-ledger.json" },
+  "jsonReporter": { "fileName": "reports/mutation/services-ledger-rerun.json" },
   "tempDirName": ".stryker-tmp-services",
   "timeoutMS": 90000,
   "dryRunTimeoutMinutes": 20,

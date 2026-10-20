@@ -113,7 +113,7 @@ describe("a write-off is allocated to specific charges", () => {
     await writeOff(id, 60_00);
     const detail = await getDetail(id, TODAY);
     expect(detail.audit.find((event) => event.action === "ledger.write_off")?.summary).toContain("covers INV-1001 ($60.00)");
-    const rows = (await ledgerCsv(TODAY)).split("\r\n").filter((line) => line.includes("Described Co") && line.includes("WRITE_OFF"));
+    const rows = (await ledgerCsv(TODAY)).split("\r\n").filter((line) => line.startsWith(`${id},`) && line.includes("WRITE_OFF"));
     expect(rows).toHaveLength(1);
     expect(rows[0]).toContain("INV-1001 ($60.00)");
   });
