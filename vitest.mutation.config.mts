@@ -13,6 +13,7 @@ export default defineConfig({
       "src/lib/server/services/ledger-rules.int.test.ts",
       "src/lib/server/services/write-off-allocations.int.test.ts",
       "src/lib/server/services/books-model.int.test.ts",
+      "src/lib/server/services/books-ledger-gaps.int.test.ts",
     ],
     fileParallelism: false,
     testTimeout: 120_000,
