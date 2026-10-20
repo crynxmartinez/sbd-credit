@@ -36,7 +36,7 @@ const CONTACT_SELECT = {
   active: true,
   passwordHash: true,
   lastLoginAt: true,
-  invites: { where: { usedAt: null, revokedAt: null }, select: { expiresAt: true }, orderBy: { createdAt: "desc" as const }, take: 1 },
+  invites: { where: { usedAt: null, revokedAt: null }, select: { expiresAt: true }, orderBy: [{ createdAt: "desc" as const }, { id: "desc" as const }], take: 1 },
 } satisfies Prisma.CustomerUserSelect;
 
 type ContactRow = Prisma.CustomerUserGetPayload<{ select: typeof CONTACT_SELECT }>;

@@ -47,7 +47,7 @@ export async function* ledgerCsvChunks(asOf: string, pageSize: number = LEDGER_P
         customer: { select: { businessName: true } },
         // An entry is "reversed" when a reversal points at it.
         reversedBy: { select: { id: true } },
-        writeOffAllocations: { include: { chargeEntry: { select: { reference: true, amountCents: true, entryDate: true } } }, orderBy: { createdAt: "asc" } },
+        writeOffAllocations: { include: { chargeEntry: { select: { reference: true, amountCents: true, entryDate: true } } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] },
       },
     });
     if (page.length === 0) return;
