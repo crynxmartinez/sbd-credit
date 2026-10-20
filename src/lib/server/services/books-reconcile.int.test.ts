@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "vitest";
 import { addDays } from "@/lib/domain/dates";
 import { prisma } from "@/lib/server/db";
 import { amountInSummary, EXPECTED_TRIGGERS, reconcileBooks } from "@/lib/server/reconcile";
@@ -57,6 +57,21 @@ async function realBooks(): Promise<{ id: string; entries: string[] }> {
 const mentions = (report: Awaited<ReturnType<typeof reconcileBooks>>, ids: string[]) =>
   report.findings.filter((finding) => ids.some((id) => finding.detail.includes(id)));
 
+/**
+ * The damage is undone after each test. The database is shared with the rest of the integration suite (and with the restore drill, which
+ * restores this whole schema and would rightly REFUSE rows that break the rules), so a test must leave nothing corrupt behind.
+ */
+const undo: Array<{ sql: string; params: unknown[] }> = [];
+afterEach(async () => {
+  await owner.query("SET session_replication_role = replica");
+  try {
+    for (const step of undo.splice(0).reverse()) await owner.query(step.sql, step.params);
+  } finally {
+    await owner.query("SET session_replication_role = DEFAULT");
+  }
+});
+const willDelete = (table: string, id: string) => undo.push({ sql: `DELETE FROM "${schema}"."${table}" WHERE "id" = $1`, params: [id] });
+
 /** Switches the database's own rules off for this connection (what an owner could do), runs the damage, and switches them back on. */
 async function asRogueOwner(damage: () => Promise<unknown>): Promise<void> {
   await owner.query("SET session_replication_role = replica");
@@ -80,6 +95,7 @@ describe("the nightly reconciliation", () => {
   test("finds an entry that was written straight into the ledger, with no history line", async () => {
     const books = await realBooks();
     const id = `rogue${randomUUID().slice(0, 8)}`;
+    willDelete("LedgerEntry", id);
     await owner.query(`INSERT INTO "${schema}"."LedgerEntry" ("id", "customerId", "type", "amountCents", "entryDate", "createdBy") VALUES ($1, $2, 'PAYMENT', 99900, $3::date, 'rogue')`, [id, books.id, TODAY]);
     const found = mentions(await reconcileBooks(prisma, TODAY), [id]);
     expect(found.map((f) => f.check)).toContain("every_entry_has_a_history_line");
@@ -88,6 +104,8 @@ describe("the nightly reconciliation", () => {
   test("finds an amount that was changed after the fact: the history line written when it was entered no longer agrees", async () => {
     const books = await realBooks();
     const target = books.entries[0]!;
+    const original = (await owner.query(`SELECT "amountCents" FROM "${schema}"."LedgerEntry" WHERE "id" = $1`, [target])).rows[0].amountCents;
+    undo.push({ sql: `UPDATE "${schema}"."LedgerEntry" SET "amountCents" = $2 WHERE "id" = $1`, params: [target, original] });
     await asRogueOwner(() => owner.query(`UPDATE "${schema}"."LedgerEntry" SET "amountCents" = "amountCents" - 100000 WHERE "id" = $1`, [target]));
     const found = mentions(await reconcileBooks(prisma, TODAY), [target]);
     expect(found.map((f) => f.check)).toContain("ledger_amount_equals_amount_in_history");
@@ -96,8 +114,10 @@ describe("the nightly reconciliation", () => {
   test("finds a write-off allocated to a charge for more than the charge was, and one not allocated in full", async () => {
     const books = await realBooks();
     const [, chargeB, , , , writeOff] = books.entries;
+    const allocationId = `wax${randomUUID().slice(0, 8)}`;
+    willDelete("WriteOffAllocation", allocationId);
     await asRogueOwner(async () => {
-      await owner.query(`INSERT INTO "${schema}"."WriteOffAllocation" ("id", "writeOffEntryId", "chargeEntryId", "amountCents") VALUES ($1, $2, $3, 900000)`, [`wax${randomUUID().slice(0, 8)}`, writeOff, chargeB]);
+      await owner.query(`INSERT INTO "${schema}"."WriteOffAllocation" ("id", "writeOffEntryId", "chargeEntryId", "amountCents") VALUES ($1, $2, $3, 900000)`, [allocationId, writeOff, chargeB]);
     });
     const found = mentions(await reconcileBooks(prisma, TODAY), [writeOff!, chargeB!]).map((f) => f.check);
     expect(found).toContain("no_charge_written_off_for_more_than_it_is");
@@ -107,6 +127,8 @@ describe("the nightly reconciliation", () => {
   test("finds a reversal that does not offset what it names", async () => {
     const books = await realBooks();
     const reversal = books.entries[6]!;
+    const reversalAmount = (await owner.query(`SELECT "amountCents" FROM "${schema}"."LedgerEntry" WHERE "id" = $1`, [reversal])).rows[0].amountCents;
+    undo.push({ sql: `UPDATE "${schema}"."LedgerEntry" SET "amountCents" = $2 WHERE "id" = $1`, params: [reversal, reversalAmount] });
     await asRogueOwner(() => owner.query(`UPDATE "${schema}"."LedgerEntry" SET "amountCents" = 1 WHERE "id" = $1`, [reversal]));
     const found = mentions(await reconcileBooks(prisma, TODAY), [reversal]).map((f) => f.check);
     expect(found).toContain("reversals_offset_exactly");
@@ -115,6 +137,7 @@ describe("the nightly reconciliation", () => {
   test("finds an entry far outside the dates and amounts the application allows", async () => {
     const books = await realBooks();
     const id = `far${randomUUID().slice(0, 8)}`;
+    willDelete("LedgerEntry", id);
     await owner.query(`INSERT INTO "${schema}"."LedgerEntry" ("id", "customerId", "type", "amountCents", "entryDate", "createdBy") VALUES ($1, $2, 'CHARGE', 100, $3::date, 'rogue')`, [id, books.id, addDays(TODAY, 400)]);
     const found = mentions(await reconcileBooks(prisma, TODAY), [id]).map((f) => f.check);
     expect(found).toContain("entries_within_the_limits_the_app_enforces");

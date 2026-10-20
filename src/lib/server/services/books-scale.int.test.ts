@@ -127,9 +127,19 @@ describe.skipIf(!ENABLED)("the books at scale", () => {
       expect(counts.rows[0].entries).toBeGreaterThanOrEqual(CUSTOMERS * ENTRIES);
 
       // 1. The list the staff see, timed, and reconciled against SQL for EVERY customer.
+      // While it runs, how long is the whole server frozen? (Everyone else's requests wait that long, every time the list is recomputed.)
+      let longestStall = 0;
+      let last = Date.now();
+      const watch = setInterval(() => {
+        const now = Date.now();
+        longestStall = Math.max(longestStall, now - last - 10);
+        last = now;
+      }, 10);
       started = Date.now();
       const summaries = await listSummaries(TODAY);
       report["listSeconds"] = seconds(started);
+      clearInterval(watch);
+      report["listLongestEventLoopStallMs"] = longestStall;
       expect(summaries).toHaveLength(CUSTOMERS);
       const sql = await sqlBalances(direct, schema);
       const wrong = summaries.filter((s) => s.balanceCents !== (sql.get(s.id) ?? 0)).map((s) => s.id);
