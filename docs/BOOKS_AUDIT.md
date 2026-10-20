@@ -54,7 +54,7 @@ Date: 2026-10-21. Branch `books-audit` (PR 8). Everything below was run, not rea
   - the portal showing a due date only for a purchase (an adjustment carries one in the database);
   - the dashboard's counts and totals (53% of its mutations survived);
   - impossible dates ("2026-02-30"), a third decimal place in a number, and the ledger export's columns.
-  - Score: **85.1% → see "Mutation" below**. What still survives is listed there, each marked equivalent or open.
+  - Score: **85.1% → 93.2%** across `src/lib/domain` (1,416 mutations), and `backup.ts` 80.6% → 92.9%. What still survives is listed there, each marked equivalent or open.
 
 **F6. A production database that is not UTF8 would refuse some writes.** (a) The local database was created as WIN1252 by default; three integration tests failed with `character with byte sequence 0xe2 0x88 0x92 in encoding "UTF8" has no equivalent in encoding "WIN1252"`: the minus sign the app writes into the history of a negative adjustment or reversal. Loud, not silent, but every such write would be refused. Production now refuses to start on any other encoding (`role-check.ts`), and the runbook says so.
 
@@ -116,11 +116,42 @@ These are not defects a test can find. They are rules the system follows exactly
 
 (a) `npm run mutation` (Stryker, `stryker.config.json`; weekly in `.github/workflows/mutation.yml`, which fails below 88%).
 
-MUTATION_SECTION
+**`src/lib/domain`** (13 files + `backup`, `idempotency`, `csv`): 1,180 mutations at the start, **85.1%** killed; after the gap tests **93.2%** (alerts, dashboard, ledger-csv, portal, summary, corrections, entry-dates 100%; ledger 97.9%; write-off 96.3%). `backup.ts` was 80.6% (every way a damaged backup file should be refused was untested); after its tests 92.9% (re-measured on its own).
+
+What still survives in the domain is, on inspection, **equivalent or a tooling artifact**, not a way for the books to be wrong:
+- `ledger.ts` `>`/`>=` on amounts that are never zero (a zero amount is refused by `LedgerEntry_amount_check`); an allocation on an entry that is not a write-off (cannot exist).
+- `write-off.ts` the days set and its sort (the minimum over days does not depend on order or on whether an edge day is included twice); an allocations list that is undefined (data from before allocations existed, covered by the legacy tests).
+- `dates.ts` the single-conjunct mutations of the calendar round-trip (each is implied by the other two: if the year and the day match, the month must), and the regex of the date pattern: Stryker cannot reliably activate mutations in a module-level constant. **Checked by hand**: removing the `$` from the pattern fails 4 tests.
+- `money.ts` `<` vs `<=` on a float tolerance, and the string-literal defaults of a destructuring.
+- `customer-list.ts`, `status.ts`, `csv.ts`: a `case` label replaced by itself, an error label, the empty-search shortcut.
+
+**`src/lib/server/services/ledger.ts`** (481 mutations, run against the integration suite on a real database): **82.6%** killed (371 killed, 9 timeouts, 60 survived, 20 with no covering test). The survivors were mostly the wording of refusal messages, but five were real gaps in rules about money, now covered by `books-ledger-gaps.int.test.ts`: a write-off from before allocations existed protecting the balance when a charge is corrected (no test reached it at all), a retry of an entry that was later voided, a post-dated entry on retry, the exact overpayment boundary, and a second void by a different person or for a different reason. The same file now asserts the words of every refusal (the words say what to do next, so they are part of the behaviour). A targeted re-run over the affected functions (329 mutations) was still running when this was pushed; its result is not in this document, so the services score above is the measurement **before** those tests.
+
+Not mutation-tested: the other services (`customers.ts`, `portal-access.ts`, `exports.ts`), the route handlers, and the screens.
+
 
 ## CI results
 
-CI_SECTION
+Run `39503765824` (commit `e5a4587`) on this branch: **every job green** (`check`, `database` including the restore drill, `browser`, `grants`, `books`, `windows`, three time-zone jobs, `ci-ok`). Later commits only add tests and were re-run by CI after this was written; see the checks on PR 8 for the current state.
+
+The `books` job's report (ubuntu runner, quiet machine, 3,000 customers, 182,378 ledger rows and as many history lines):
+
+| Step | Result |
+| --- | --- |
+| Generate the rows in the database | 11.4 s |
+| Customer list (computed) | 1.27 s |
+| Nightly reconciliation (all 182,378 amounts cross-checked against their history lines) | 2.06 s |
+| Dashboard | 0.02 s |
+| Customers CSV / ledger CSV (18 MB, streamed) | 1.12 s / 5.7 s |
+| Heaviest customer's page | 0.01 s |
+| `pg_dump -Fc` of the schema | **0.85 s** |
+| `pg_restore` into a clean database | **3.33 s** |
+| Rows (4 tables), their md5, and every customer's balance, restored vs original | **identical** |
+| Triggers after the restore | all present and enabled; DELETE and UPDATE of a recorded amount refused by the restored database |
+| CHECK constraints after the restore | 22 |
+
+The first `database` run on this branch failed, and that was a real lesson: the reconcile tests (which deliberately corrupt rows as a rogue owner could) left corrupt rows in the shared test schema, and the restore drill **correctly refused to restore them** (`allocations cannot add up to more than the write-off`). The tests now undo their damage. It also shows the restore does enforce the rules on the way back in.
+
 
 ## What was not done, and why
 
