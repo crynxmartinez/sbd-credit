@@ -6,7 +6,9 @@ import type { SessionUser } from "@/lib/types";
 import type { CustomerCreateInput } from "@/lib/validation";
 import { businessToday } from "../as-of";
 import { createCustomer, decide, getDetail, listSummaries } from "./customers";
-import { recordEntry, reverseEntry } from "./ledger";
+import { ledgerCsv } from "./exports";
+import { LEDGER_CSV_HEADER } from "@/lib/domain/ledger-csv";
+import { recordEntry, reverseEntry, voidEntry } from "./ledger";
 
 /**
  * A screen is built from several reads. If a write commits BETWEEN two of them, the screen can show a figure that never existed in the
@@ -47,15 +49,16 @@ afterEach(() => { proto.query = realQuery; });
  * Holds the FIRST statement matching `hold` until released, reports when it has been reached, and reports when a statement matching
  * `done` has finished. Everything else runs untouched.
  */
-function intercept(opts: { hold?: (sql: string) => boolean; done?: (sql: string) => boolean }) {
+function intercept(opts: { hold?: (sql: string, values: unknown[]) => boolean; done?: (sql: string) => boolean }) {
   const reached = deferred();
   const release = deferred();
   const finished = deferred();
   let held = false;
   proto.query = function (this: unknown, ...args: unknown[]) {
-    const first = args[0] as string | { text?: string };
+    const first = args[0] as string | { text?: string; values?: unknown[] };
     const sql = (typeof first === "string" ? first : (first.text ?? "")).replace(/"credit_[a-z0-9_]+"\./g, "");
-    if (opts.hold && !held && opts.hold(sql)) {
+    const values = ((typeof first === "string" ? args[1] : (first.values ?? args[1])) ?? []) as unknown[];
+    if (opts.hold && !held && opts.hold(sql, values)) {
       held = true;
       reached.resolve();
       return release.promise.then(() => realQuery.apply(this, args));
@@ -133,5 +136,37 @@ describe("a screen is one moment in time", () => {
     const reversalShown = detail.ledger.some((e) => e.type === "REVERSAL");
     expect(row.reversed, "the entry says it was reversed, so the reversal must be on the page").toBe(reversalShown);
     expect(detail.customer.balanceCents, "and the balance must agree with what is on the page").toBe(reversalShown ? 0 : 100_00);
+  });
+
+  /**
+   * KNOWN LIMIT, not yet fixed (docs/BOOKS_AUDIT.md, F7). The ledger export reads the table a page at a time, each page a separate
+   * statement, so a file made while people are saving can combine two moments: here an entry that was voided (read on page 1, before the
+   * void) next to one that was added after it (read on page 2). The file's "counts today" rows then add up to a balance the books never
+   * had. `test.fails` keeps this honest: it passes while the limit exists and FAILS the day the export becomes one snapshot, which is the
+   * signal to turn it into an ordinary test.
+   */
+  test.fails("the ledger export across pages shows one moment", async () => {
+    const id = await approvedCustomer();
+    const first = await recordEntry(id, entry("CHARGE", 10_00, TODAY, { reference: "EXP-1" }), ADMIN, clock);
+    await recordEntry(id, entry("CHARGE", 20_00, TODAY, { reference: "EXP-2" }), ADMIN, clock);
+    const books = async () => (await getDetail(id, TODAY)).customer.balanceCents;
+    const before = await books(); // 30.00: the only moment at which EXP-1 is live and EXP-3 does not exist
+
+    // One row per page. The read that follows the page holding EXP-1 (it carries EXP-1's id as its cursor) is held, and the books change
+    // underneath it: EXP-1 is voided, and a new charge is added. EXP-1 has already been read as live; the new charge has not been read yet.
+    const hold = intercept({ hold: (sql, values) => sql.includes('FROM "LedgerEntry"') && sql.includes("ORDER BY") && values.includes(first.id) });
+    const file = ledgerCsv(TODAY, 1);
+    await hold.reached;
+    await voidEntry(id, first.id, "typo", ADMIN, clock);
+    await recordEntry(id, entry("CHARGE", 5_00, TODAY, { reference: "EXP-3" }), ADMIN, clock);
+    hold.release();
+    const csv = await file;
+    proto.query = realQuery;
+
+    const col = (cells: string[], name: (typeof LEDGER_CSV_HEADER)[number]) => cells[LEDGER_CSV_HEADER.indexOf(name)]!;
+    const mine = csv.trim().split(String.fromCharCode(13, 10)).filter((line) => line.startsWith(`${id},`)).map((line) => line.split(","));
+    const counted = mine.filter((cells) => col(cells, "Counts today") === "yes").reduce((sum, cells) => sum + Math.round(Number(col(cells, "Effect on balance")) * 100), 0);
+    const after = await books();
+    expect([before, after], "the file adds up to a balance the books had at no moment").toContain(counted);
   });
 });

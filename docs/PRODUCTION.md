@@ -332,3 +332,9 @@ did what. Decide and write down: how long closed accounts are kept, who may see 
   customers at once and they all accept within a minute, expect some to see "busy" and retry.
 - **A scheduled restore drill for production is still manual** (section 5). CI proves the code path on every change; only a person
   can prove the real backups restore.
+- **The ledger CSV export is not one snapshot.** It is read a page at a time (so a 200,000-row ledger streams instead of filling memory), and
+  two writes that land between two pages can leave a file whose "counts today" rows add up to a balance the books never had (shown by
+  `books-snapshot.int.test.ts`, marked `test.fails` until it is fixed). The customer list, customer page and portal ARE snapshots. Until the
+  export is made one, take the ledger export when few people are saving, and treat `npm run reconcile` (which is a snapshot) as the figure
+  of record. The fix is to run the pages inside one repeatable-read transaction fed through a small queue, with the idle-in-transaction
+  timeout raised for that transaction only.
