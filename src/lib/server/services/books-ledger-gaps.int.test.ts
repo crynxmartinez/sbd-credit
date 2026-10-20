@@ -202,3 +202,42 @@ describe("every refusal says what happened and what to do", () => {
     expect(line).toMatch(/covers INV-77 \(\$30\.00\), a charge of \$20\.00 dated [A-Z][a-z]{2} \d{1,2}, \d{4} \(\$20\.00\)/);
   });
 });
+
+describe("the warnings and due dates an entry is recorded with", () => {
+  test("over-limit: a charge that reaches the limit warns, one cent under does not; a limit of zero never warns; money going down never warns", async () => {
+    const id = await approved(500_00);
+    expect((await recordEntry(id, entry("CHARGE", 499_99), ADMIN, clock)).warning).toBeNull();
+    expect((await recordEntry(id, entry("CHARGE", 1), ADMIN, clock)).warning).toBe("over_limit"); // exactly at 500.00
+    expect((await recordEntry(id, entry("CHARGE", 10_00), ADMIN, clock)).warning).toBe("over_limit"); // beyond it
+    expect((await recordEntry(id, entry("PAYMENT", 1_00), ADMIN, clock)).warning).toBeNull(); // still over, but going down
+    expect((await recordEntry(id, entry("ADJUSTMENT", -1_00, TODAY, { note: "rebate" }), ADMIN, clock)).warning).toBeNull();
+    const unlimited = await approved(1); // a 1-cent line: any charge reaches it
+    expect((await recordEntry(unlimited, entry("CHARGE", 5_00), ADMIN, clock)).warning).toBe("over_limit");
+  });
+
+  test("overpayment is only ever said about a payment: a negative adjustment or a write-off that takes the balance below zero is not an 'overpayment'", async () => {
+    const id = await approved();
+    await recordEntry(id, entry("CHARGE", 10_00), ADMIN, clock);
+    expect((await recordEntry(id, entry("ADJUSTMENT", -25_00, TODAY, { note: "credit memo" }), ADMIN, clock)).warning).toBeNull();
+  });
+
+  test("a charge and an adjustment carry a due date (terms from the entry date, or the one given); a payment and a write-off never do", async () => {
+    const id = await approved();
+    const due = async (entryId: string) => (await getDetail(id, TODAY)).ledger.find((row) => row.id === entryId)!.dueDate;
+    const byTerms = await recordEntry(id, entry("CHARGE", 10_00, TODAY), ADMIN, clock);
+    expect(await due(byTerms.id)).toBe(addDays(TODAY, 30)); // Net 30
+    const explicit = await recordEntry(id, entry("CHARGE", 10_00, TODAY, { dueDate: addDays(TODAY, 7) }), ADMIN, clock);
+    expect(await due(explicit.id)).toBe(addDays(TODAY, 7));
+    const adjustment = await recordEntry(id, entry("ADJUSTMENT", 5_00, TODAY, { note: "late fee" }), ADMIN, clock);
+    expect(await due(adjustment.id)).toBe(addDays(TODAY, 30));
+    const payment = await recordEntry(id, entry("PAYMENT", 5_00, TODAY, { dueDate: addDays(TODAY, 9) }), ADMIN, clock);
+    expect(await due(payment.id)).toBeNull();
+    const writeOff = await recordEntry(id, entry("WRITE_OFF", 5_00, TODAY, { note: "uncollectable", dueDate: addDays(TODAY, 9) }), ADMIN, clock);
+    expect(await due(writeOff.id)).toBeNull();
+  });
+
+  test("a payment or a write-off needs an account that has, or had, a credit line or a ledger", async () => {
+    const id = await createCustomer(profile(`Gap review ${randomUUID().slice(0, 8)}`), ADMIN);
+    refused(await refusal(recordEntry(id, entry("WRITE_OFF", 5_00, TODAY, { note: "nothing" }), ADMIN, clock)), 409, "invalid_state", /no balance to change/);
+  });
+});
